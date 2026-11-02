@@ -134,13 +134,27 @@ PolarityAudioProcessorEditor::PolarityAudioProcessorEditor (PolarityAudioProcess
 
     refreshPresetList();
 
-    styleButton (abButton);
-    abButton.onClick = [this]
+    for (auto* button : { &slotAButton, &slotBButton })
     {
-        processorRef.setActiveSlot (1 - processorRef.getActiveSlot());
+        styleButton (*button);
+        button->setColour (juce::TextButton::buttonColourId,
+                           juce::Colours::transparentBlack);
+        button->setClickingTogglesState (true);
+        button->setRadioGroupId (104);
+        addAndMakeVisible (*button);
+    }
+
+    slotAButton.onClick = [this]
+    {
+        processorRef.setActiveSlot (0);
         updateButtons();
     };
-    addAndMakeVisible (abButton);
+
+    slotBButton.onClick = [this]
+    {
+        processorRef.setActiveSlot (1);
+        updateButtons();
+    };
 
     for (auto* button : { &normButton, &deltaButton })
     {
@@ -454,7 +468,9 @@ void PolarityAudioProcessorEditor::updateButtons()
     undoButton.setEnabled (curveEditor.canUndo());
     redoButton.setEnabled (curveEditor.canRedo());
 
-    abButton.setButtonText (processorRef.getActiveSlot() == 0 ? "A/B: A" : "A/B: B");
+    const bool slotA = processorRef.getActiveSlot() == 0;
+    slotAButton.setToggleState (slotA, juce::dontSendNotification);
+    slotBButton.setToggleState (! slotA, juce::dontSendNotification);
 
     const auto* deltaParameter = processorRef.getValueTreeState()
                                      .getRawParameterValue ("deltaOut");
@@ -527,6 +543,7 @@ void PolarityAudioProcessorEditor::paint (juce::Graphics& g)
     };
 
     g.setColour (polarity::theme::panelAlt);
+    g.fillRoundedRectangle (groupBounds ({ &slotAButton, &slotBButton }), 6.0f);
     g.fillRoundedRectangle (groupBounds ({ &layerLeft, &layerStereo, &layerRight }), 6.0f);
     g.fillRoundedRectangle (groupBounds ({ &toolDraw, &toolNode, &toolErase }), 6.0f);
     g.fillRoundedRectangle (groupBounds ({ &spectrumButton, &polarityButton }), 6.0f);
@@ -602,8 +619,10 @@ void PolarityAudioProcessorEditor::resized()
     row.removeFromRight (4);
     undoButton.setBounds (takeRight (54));
 
-    abButton.setBounds (takeLeft (68));
-    row.removeFromLeft (10);
+    slotAButton.setBounds (takeLeft (40));
+    row.removeFromLeft (2);
+    slotBButton.setBounds (takeLeft (40));
+    row.removeFromLeft (14);
 
     layerLeft.setBounds (takeLeft (40));
     row.removeFromLeft (2);

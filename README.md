@@ -61,7 +61,7 @@ cmake --build Build --config Release --target Polarity_VST3 Polarity_Standalone 
 - **L / ST / R**：L 只编辑左通道，R 只编辑右通道，ST 同时写入两侧。
 - y 轴：0 = 原样，1 = NULL（完全抵消），2 = INVERT（极性反转）；x 轴 20Hz–20kHz。
 - UNDO / REDO 撤销重做；MIX 干湿；BYPASS 保持延迟对齐。
-- **A/B**：两套独立曲线槽，点 `A/B` 切换；两套曲线都随工程保存。
+- **A / B**：两套独立曲线槽，用与 L/ST/R 相同的分段按钮切换；两套曲线都随工程保存。
 - 右侧 **M/S** 表：显示处理后的 Mid/Side 电平与 L/R 相关度；相关度为负时变红，提示单声道兼容风险。
 - **画布叠加**（`SPECTRUM` / `POLARITY` 两个开关）：
   - SPECTRUM：灰蓝线 = 输入（已按插件延迟对齐），墨绿主线 = 输出；纵轴 −100…0 dB，刻度在画布右侧。
@@ -91,7 +91,7 @@ cmake --build Build --config Release --target Polarity_VST3 Polarity_Standalone 
 
 - 模式按钮放在浅沙色底板里：未选中透明、选中墨底纸字；`SAVE` 为朱红底纸字；Undo/Redo 为幽灵文字。
 - 字体层级统一为四级：品牌 26 / 主要 13（副标题、鼠标读数）/ 控件 12（按钮、下拉、字段名、预设、滑杆数值）/ 注释 11（频率/反相量/dBFS 刻度、M/S、波形标题/提示、警告）；最小字号不低于 11。
-- 布局：品牌 / 预设+保存+NORM|DELTA+旁通；副标题 + SLOPE/SMOOTH/TIME；A/B + L/ST/R + 工具在左，Undo/Redo + SPECTRUM/POLARITY 在右；主区曲线 + 瘦身 M/S；下方 WAVEFORM；底栏 MIX 左，QUALITY / EDGE / METRIC / WAVE 右。
+- 布局：品牌 / 预设+保存+NORM|DELTA+旁通；副标题 + SLOPE/SMOOTH/TIME；A|B + L/ST/R + 工具在左，Undo/Redo + SPECTRUM/POLARITY 在右；主区曲线 + 瘦身 M/S；下方 WAVEFORM；底栏 MIX 左，QUALITY / EDGE / METRIC / WAVE 右。
 - **统一左基准线**：标题、副标题、A/B、曲线 20Hz Y 轴、波形面板左缘、MIX 都落在同一条 40px 竖线上；左侧 40px 作为品牌斜杠 + INV/1.5/NULL/0.5 刻度槽。
 - **统一右基准线**：WAVEFORM 面板右缘与 M/S 面板右缘对齐，外框和内绘图区都参与对齐。
 - L = 钴蓝，R = 朱红，ST = 紫；频谱输入灰蓝、输出墨绿；热力图浅蓝 → 钴蓝 → 沙色 → 橙 → 朱红。

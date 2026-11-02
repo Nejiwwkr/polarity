@@ -51,7 +51,8 @@ private:
     juce::TextButton savePresetButton { "SAVE" };
     bool suppressPresetLoad = false;
 
-    juce::TextButton abButton { "A/B: A" };
+    juce::TextButton slotAButton { "A" };
+    juce::TextButton slotBButton { "B" };
     juce::TextButton normButton { "NORM" };
     juce::TextButton deltaButton { "DELTA" };
     juce::TextButton layerLeft { "L" };
