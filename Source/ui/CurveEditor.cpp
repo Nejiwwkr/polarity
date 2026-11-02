@@ -2,6 +2,7 @@
 
 #include "../PluginProcessor.h"
 #include "PolarityTheme.h"
+#include "PolarityType.h"
 
 #include <algorithm>
 #include <cmath>
@@ -408,7 +409,7 @@ void CurveEditor::drawDbScale (juce::Graphics& g,
     g.setColour (kGrid);
     g.drawVerticalLine (juce::roundToInt (x), area.getY(), area.getBottom());
 
-    g.setFont (juce::Font (juce::FontOptions (9.5f)));
+    g.setFont (juce::Font (juce::FontOptions (polarity::type::annotation)));
 
     for (int db = 0; db >= -100; db -= 20)
     {
@@ -446,7 +447,7 @@ void CurveEditor::paint (juce::Graphics& g)
 
     drawSpectrumFill (g, area);
 
-    g.setFont (juce::Font (juce::FontOptions (10.5f)));
+    g.setFont (juce::Font (juce::FontOptions (polarity::type::annotation)));
 
     const double freqs[] = { 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000 };
 
@@ -548,7 +549,7 @@ void CurveEditor::paint (juce::Graphics& g)
         }
 
         g.setColour (kText);
-        g.setFont (juce::Font (juce::FontOptions (12.5f)));
+        g.setFont (juce::Font (juce::FontOptions (polarity::type::primary)));
         g.drawText (text,
                     area.reduced (8.0f).removeFromTop (18.0f).toNearestInt(),
                     juce::Justification::left,
@@ -558,7 +559,7 @@ void CurveEditor::paint (juce::Graphics& g)
     if (curvesDiffer())
     {
         g.setColour (kWarning);
-        g.setFont (juce::Font (juce::FontOptions (11.5f)));
+        g.setFont (juce::Font (juce::FontOptions (polarity::type::annotation)));
         g.drawText ("L/R differ - check mono",
                     area.reduced (8.0f).removeFromTop (18.0f).toNearestInt(),
                     juce::Justification::right,

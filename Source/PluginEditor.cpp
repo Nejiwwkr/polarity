@@ -1,6 +1,7 @@
 #include "PluginEditor.h"
 #include "PluginProcessor.h"
 #include "ui/PolarityTheme.h"
+#include "ui/PolarityType.h"
 
 PolarityAudioProcessorEditor::PolarityAudioProcessorEditor (PolarityAudioProcessor& p)
     : AudioProcessorEditor (&p),
@@ -19,19 +20,19 @@ PolarityAudioProcessorEditor::PolarityAudioProcessorEditor (PolarityAudioProcess
     setResizeLimits (820, 640, 1800, 1200);
 
     titleLabel.setText ("POLARITY", juce::dontSendNotification);
-    titleLabel.setFont (juce::Font (juce::FontOptions (26.0f)));
+    titleLabel.setFont (juce::Font (juce::FontOptions (polarity::type::display)));
     titleLabel.setColour (juce::Label::textColourId, polarity::theme::ink);
     addAndMakeVisible (titleLabel);
 
     subtitleLabel.setText ("frequency inversion  /  inverted amount",
                            juce::dontSendNotification);
-    subtitleLabel.setFont (juce::Font (juce::FontOptions (12.5f)));
+    subtitleLabel.setFont (juce::Font (juce::FontOptions (polarity::type::primary)));
     subtitleLabel.setJustificationType (juce::Justification::centredLeft);
     subtitleLabel.setColour (juce::Label::textColourId, polarity::theme::secondary);
     addAndMakeVisible (subtitleLabel);
 
     slopeCaption.setText ("SLOPE", juce::dontSendNotification);
-    slopeCaption.setFont (juce::Font (juce::FontOptions (11.5f)));
+    slopeCaption.setFont (juce::Font (juce::FontOptions (polarity::type::control)));
     slopeCaption.setJustificationType (juce::Justification::centredLeft);
     slopeCaption.setColour (juce::Label::textColourId, polarity::theme::secondary);
     addAndMakeVisible (slopeCaption);
@@ -51,7 +52,7 @@ PolarityAudioProcessorEditor::PolarityAudioProcessorEditor (PolarityAudioProcess
     addAndMakeVisible (slopeBox);
 
     smoothCaption.setText ("SMOOTH", juce::dontSendNotification);
-    smoothCaption.setFont (juce::Font (juce::FontOptions (11.5f)));
+    smoothCaption.setFont (juce::Font (juce::FontOptions (polarity::type::control)));
     smoothCaption.setJustificationType (juce::Justification::centredLeft);
     smoothCaption.setColour (juce::Label::textColourId, polarity::theme::secondary);
     addAndMakeVisible (smoothCaption);
@@ -71,7 +72,7 @@ PolarityAudioProcessorEditor::PolarityAudioProcessorEditor (PolarityAudioProcess
     addAndMakeVisible (smoothBox);
 
     timeCaption.setText ("TIME", juce::dontSendNotification);
-    timeCaption.setFont (juce::Font (juce::FontOptions (11.5f)));
+    timeCaption.setFont (juce::Font (juce::FontOptions (polarity::type::control)));
     timeCaption.setJustificationType (juce::Justification::centredLeft);
     timeCaption.setColour (juce::Label::textColourId, polarity::theme::secondary);
     addAndMakeVisible (timeCaption);
@@ -251,7 +252,7 @@ PolarityAudioProcessorEditor::PolarityAudioProcessorEditor (PolarityAudioProcess
     addAndMakeVisible (waveformPanel);
 
     mixCaption.setText ("MIX", juce::dontSendNotification);
-    mixCaption.setFont (juce::Font (juce::FontOptions (11.5f)));
+    mixCaption.setFont (juce::Font (juce::FontOptions (polarity::type::control)));
     mixCaption.setJustificationType (juce::Justification::centredLeft);
     mixCaption.setColour (juce::Label::textColourId, polarity::theme::secondary);
     addAndMakeVisible (mixCaption);
@@ -264,7 +265,7 @@ PolarityAudioProcessorEditor::PolarityAudioProcessorEditor (PolarityAudioProcess
     addAndMakeVisible (mixSlider);
 
     waveCaption.setText ("WAVE", juce::dontSendNotification);
-    waveCaption.setFont (juce::Font (juce::FontOptions (11.5f)));
+    waveCaption.setFont (juce::Font (juce::FontOptions (polarity::type::control)));
     waveCaption.setJustificationType (juce::Justification::centredLeft);
     waveCaption.setColour (juce::Label::textColourId, polarity::theme::secondary);
     addAndMakeVisible (waveCaption);
@@ -286,7 +287,7 @@ PolarityAudioProcessorEditor::PolarityAudioProcessorEditor (PolarityAudioProcess
     addAndMakeVisible (waveSpeedBox);
 
     edgeCaption.setText ("EDGE", juce::dontSendNotification);
-    edgeCaption.setFont (juce::Font (juce::FontOptions (11.5f)));
+    edgeCaption.setFont (juce::Font (juce::FontOptions (polarity::type::control)));
     edgeCaption.setJustificationType (juce::Justification::centredLeft);
     edgeCaption.setColour (juce::Label::textColourId, polarity::theme::secondary);
     addAndMakeVisible (edgeCaption);
@@ -308,7 +309,7 @@ PolarityAudioProcessorEditor::PolarityAudioProcessorEditor (PolarityAudioProcess
     statusLabel.setText (
         "heatmap: 0 blue / NULL light / INV red",
         juce::dontSendNotification);
-    statusLabel.setFont (juce::Font (juce::FontOptions (11.0f)));
+    statusLabel.setFont (juce::Font (juce::FontOptions (polarity::type::annotation)));
     statusLabel.setJustificationType (juce::Justification::centredRight);
     statusLabel.setColour (juce::Label::textColourId, polarity::theme::secondary);
 

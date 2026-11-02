@@ -30,6 +30,7 @@ public:
 
     void drawPopupMenuBackground (juce::Graphics&, int width, int height) override;
 
+    juce::Label* createSliderTextBox (juce::Slider&) override;
     juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;
     juce::Font getComboBoxFont (juce::ComboBox&) override;
 };

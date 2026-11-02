@@ -2,6 +2,7 @@
 
 #include "../PluginProcessor.h"
 #include "PolarityTheme.h"
+#include "PolarityType.h"
 
 #include <algorithm>
 #include <cmath>
@@ -98,14 +99,14 @@ void WaveformPanel::paint (juce::Graphics& g)
     g.fillRoundedRectangle (area, 8.0f);
 
     auto inner = area.reduced (6.0f).withTrimmedLeft (0.0f);
-    auto header = inner.removeFromTop (12.0f);
+    auto header = inner.removeFromTop (14.0f);
 
-    g.setFont (juce::Font (juce::FontOptions (10.0f)));
+    g.setFont (juce::Font (juce::FontOptions (polarity::type::annotation)));
     g.setColour (frozen ? kWarning : kDim);
     g.drawText ("WAVEFORM  /  RMS", header.toNearestInt(),
                 juce::Justification::left, false);
 
-    g.setFont (juce::Font (juce::FontOptions (9.5f)));
+    g.setFont (juce::Font (juce::FontOptions (polarity::type::annotation)));
     g.setColour (frozen ? kWarning : kDim.withAlpha (0.55f));
     g.drawText (frozen ? "FROZEN - click to resume" : "click to freeze",
                 header.withTrimmedLeft (110.0f).withTrimmedRight (110.0f)

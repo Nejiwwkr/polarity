@@ -84,6 +84,7 @@ cmake --build Build --config Release --target Polarity_VST3 Polarity_Standalone 
 设计方向是 **纸 / 墨 / 朱红**：暖白纸底、墨色主操作、朱红强调与左侧 2px 边条，刻意避开 soothe2 的冷蓝灰。控件无边框，只用填充色区分；主面板用柔和阴影分层，没有渐变或拟物旋钮。
 
 - 模式按钮放在浅沙色底板里：未选中透明、选中墨底纸字；`SAVE` 为朱红底纸字；Undo/Redo 为幽灵文字。
+- 字体层级统一为四级：品牌 26 / 主要 13（副标题、鼠标读数）/ 控件 12（按钮、下拉、字段名、预设、滑杆数值）/ 注释 11（频率/反相量/dBFS 刻度、M/S、波形标题/提示、警告）；最小字号不低于 11。
 - 布局：品牌 / 预设+保存+旁通；副标题 + SLOPE/SMOOTH/TIME；A/B + L/ST/R + 工具在左，Undo/Redo + SPECTRUM/POLARITY 在右；主区曲线 + 瘦身 M/S；下方 WAVEFORM；底栏 MIX 左、WAVE/EDGE 右。
 - **统一左基准线**：标题、副标题、A/B、曲线 20Hz Y 轴、波形面板左缘、MIX 都落在同一条 40px 竖线上；左侧 40px 作为品牌斜杠 + INV/1.5/NULL/0.5 刻度槽。
 - **统一右基准线**：WAVEFORM 面板右缘与 M/S 面板右缘对齐，外框和内绘图区都参与对齐。
@@ -171,6 +172,7 @@ Source/
     WaveformPanel.h/.cpp        # 输入/输出波形、填充、速度窗口、冻结
     PolarityLookAndFeel.h/.cpp  # 扁平浅色控件外观
     PolarityTheme.h             # 纸 / 墨 / 朱红调色板
+    PolarityType.h              # 26 / 13 / 12 / 11 字号层级
   state/
     PresetManager.h/.cpp        # 文件预设（用户目录 XML）
   dsp/

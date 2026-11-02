@@ -2,6 +2,7 @@
 
 #include "../PluginProcessor.h"
 #include "PolarityTheme.h"
+#include "PolarityType.h"
 
 #include <cmath>
 
@@ -35,7 +36,7 @@ void MeterPanel::paint (juce::Graphics& g)
 
     auto title = inner.removeFromTop (14.0f);
     g.setColour (polarity::theme::secondary);
-    g.setFont (juce::Font (juce::FontOptions (10.0f)));
+    g.setFont (juce::Font (juce::FontOptions (polarity::type::annotation)));
     g.drawText ("M / S", title, juce::Justification::centred, false);
 
     auto corrArea = inner.removeFromBottom (30.0f);
@@ -53,7 +54,7 @@ void MeterPanel::paint (juce::Graphics& g)
     drawBar (g, midBar, processorRef.getMeterMidDb(), polarity::theme::cobalt);
     drawBar (g, sideBar, processorRef.getMeterSideDb(), polarity::theme::violet);
 
-    g.setFont (juce::Font (juce::FontOptions (10.0f)));
+    g.setFont (juce::Font (juce::FontOptions (polarity::type::annotation)));
     g.setColour (polarity::theme::secondary);
 
     auto midLabel = labelRow.removeFromLeft (halfWidth);
@@ -74,7 +75,7 @@ void MeterPanel::paint (juce::Graphics& g)
                                                   : polarity::theme::teal);
 
     g.setColour (correlationColour);
-    g.setFont (juce::Font (juce::FontOptions (10.0f)));
+    g.setFont (juce::Font (juce::FontOptions (polarity::type::annotation)));
     g.drawText ("CORR " + juce::String (correlation, 2),
                 corrArea.removeFromTop (14.0f),
                 juce::Justification::centred,

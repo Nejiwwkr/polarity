@@ -1,6 +1,7 @@
 #include "PolarityLookAndFeel.h"
 
 #include "PolarityTheme.h"
+#include "PolarityType.h"
 
 namespace
 {
@@ -44,12 +45,22 @@ PolarityLookAndFeel::PolarityLookAndFeel()
 
 juce::Font PolarityLookAndFeel::getTextButtonFont (juce::TextButton&, int)
 {
-    return flatFont (12.0f);
+    return flatFont (polarity::type::control);
 }
 
 juce::Font PolarityLookAndFeel::getComboBoxFont (juce::ComboBox&)
 {
-    return flatFont (12.0f);
+    return flatFont (polarity::type::control);
+}
+
+juce::Label* PolarityLookAndFeel::createSliderTextBox (juce::Slider& slider)
+{
+    auto* label = LookAndFeel_V4::createSliderTextBox (slider);
+
+    if (label != nullptr)
+        label->setFont (juce::Font (juce::FontOptions (polarity::type::control)));
+
+    return label;
 }
 
 void PolarityLookAndFeel::drawButtonBackground (
@@ -125,7 +136,7 @@ void PolarityLookAndFeel::drawToggleButton (juce::Graphics& g,
     }
 
     g.setColour (button.isEnabled() ? ink : muted);
-    g.setFont (flatFont (12.0f));
+    g.setFont (flatFont (polarity::type::control));
     g.drawText (button.getButtonText(), bounds.reduced (6, 0),
                 juce::Justification::centredLeft, false);
 }
