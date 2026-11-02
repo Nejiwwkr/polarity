@@ -23,6 +23,13 @@ public:
     void setMetric (Metric newMetric);
     Metric getMetric() const noexcept { return metric; }
 
+    /** Header strip in local coordinates, shared with the editor so the
+        WAVE / METRIC controls can sit inside it. */
+    juce::Rectangle<int> getHeaderBounds() const;
+
+    /** Space reserved on the header's right for the painted IN/OUT legend. */
+    static constexpr int headerLegendWidth = 54;
+
 private:
     void timerCallback() override;
 

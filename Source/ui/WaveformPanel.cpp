@@ -15,6 +15,20 @@ const juce::Colour kDim    = polarity::theme::secondary;
 const juce::Colour kInput  { 0xff8fa1ae };
 const juce::Colour kOutput = polarity::theme::teal;
 const juce::Colour kWarning = polarity::theme::amber;
+
+constexpr float kOuterInset = 8.0f;
+constexpr float kLeftGutter = 20.0f;
+constexpr float kInnerInset = 6.0f;
+constexpr float kInnerLeftTrim = 6.0f;
+constexpr float kHeaderHeight = 26.0f;
+
+juce::Rectangle<float> innerPanelArea (juce::Rectangle<float> local)
+{
+    return local.reduced (kOuterInset)
+                .withTrimmedLeft (kLeftGutter)
+                .reduced (kInnerInset)
+                .withTrimmedLeft (kInnerLeftTrim);
+}
 } // namespace
 
 WaveformPanel::WaveformPanel (PolarityAudioProcessor& processor)
@@ -126,11 +140,20 @@ float WaveformPanel::outputPeakAt (int point) const
     return std::max (std::abs (mn), std::abs (mx));
 }
 
+juce::Rectangle<int> WaveformPanel::getHeaderBounds() const
+{
+    return innerPanelArea (getLocalBounds().toFloat())
+        .removeFromTop (kHeaderHeight)
+        .toNearestInt();
+}
+
 void WaveformPanel::paint (juce::Graphics& g)
 {
     g.fillAll (polarity::theme::paper);
 
-    auto area = getLocalBounds().toFloat().reduced (8.0f).withTrimmedLeft (20.0f);
+    auto area = getLocalBounds().toFloat()
+                    .reduced (kOuterInset)
+                    .withTrimmedLeft (kLeftGutter);
 
     juce::DropShadow shadow (juce::Colour (0x12000000), 6, { 0, 2 });
     juce::Path panelPath;
@@ -140,8 +163,8 @@ void WaveformPanel::paint (juce::Graphics& g)
     g.setColour (polarity::theme::panel);
     g.fillRoundedRectangle (area, 8.0f);
 
-    auto inner = area.reduced (6.0f).withTrimmedLeft (6.0f);
-    auto header = inner.removeFromTop (14.0f);
+    auto inner = innerPanelArea (getLocalBounds().toFloat());
+    auto header = inner.removeFromTop (kHeaderHeight);
 
     const double sampleRate = processorRef.getSampleRate();
     const int windowSamples = frozen ? frozenWindowSamples
@@ -152,28 +175,24 @@ void WaveformPanel::paint (juce::Graphics& g)
 
     g.setFont (juce::Font (juce::FontOptions (polarity::type::annotation)));
     g.setColour (frozen ? kWarning : kDim);
-    g.drawText ("WAVEFORM  /  "
-                    + juce::String (metric == Metric::Peak ? "PEAK" : "RMS"),
+    g.drawText ("WAVEFORM",
                 header.toNearestInt(),
                 juce::Justification::left, false);
 
     g.setColour (frozen ? kWarning : kDim.withAlpha (0.55f));
     g.drawText (frozen ? "FROZEN - click to resume" : "click to freeze",
-                header.withTrimmedLeft (120.0f).withTrimmedRight (110.0f)
+                header.withTrimmedLeft (110.0f).withWidth (180.0f)
                     .toNearestInt(),
-                juce::Justification::centred,
+                juce::Justification::left,
                 false);
 
-    auto rightArea = header;
+    auto legend = header.removeFromRight (static_cast<float> (headerLegendWidth));
     g.setColour (kOutput);
-    g.drawText ("OUT", rightArea.removeFromRight (30.0f).toNearestInt(),
+    g.drawText ("OUT", legend.removeFromRight (30.0f).toNearestInt(),
                 juce::Justification::centredRight, false);
     g.setColour (kInput);
-    g.drawText ("IN", rightArea.removeFromRight (24.0f).toNearestInt(),
+    g.drawText ("IN", legend.removeFromRight (24.0f).toNearestInt(),
                 juce::Justification::centredRight, false);
-    g.setColour (kDim);
-    g.drawText (windowMs > 0 ? juce::String (windowMs) + " ms" : juce::String(),
-                rightArea.toNearestInt(), juce::Justification::centredRight, false);
 
     inner.removeFromTop (2.0f);
 

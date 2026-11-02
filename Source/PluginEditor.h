@@ -81,7 +81,5 @@ private:
     juce::ComboBox qualityBox;
     double qualitySampleRate = 0.0;
 
-    juce::Label statusLabel;
-
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PolarityAudioProcessorEditor)
 };

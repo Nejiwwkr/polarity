@@ -54,8 +54,8 @@ cmake --build Build --config Release --target Polarity_VST3 Polarity_Standalone 
 
 - 默认曲线平直，插件透明。
 - **DRAW**：按住拖动，在光标频率直接写入反相量。
-- **EDGE**（底部）：Off / 1 bin / 2 bins / 4 bins（默认 2 bins）。在 FIR 设计时对 H(f) 过渡做频域平滑，缓解陡峭曲线边界的振铃/预回声；A=0/A=2 的平坦区域仍然精确。
-- **QUALITY**（底栏 MIX 右侧）：2048 / 4096 / 8192 taps，选项文本显示当前采样率下的实际延迟（48kHz 时约 21.3 / 42.7 / 85.3 ms）。taps 越大，频率分辨率越高、深 null 越容易做出来，但 PDC 延迟越大；切换时插件会上报新的延迟，宿主可能重新同步播放位置。默认 4096。
+- **EDGE**（底栏 FIR 组，与 QUALITY 同组）：Off / 1 bin / 2 bins / 4 bins（默认 2 bins）。在 FIR 设计时对 H(f) 过渡做频域平滑，缓解陡峭曲线边界的振铃/预回声；A=0/A=2 的平坦区域仍然精确。
+- **QUALITY**（底栏 FIR 组）：2048 / 4096 / 8192 taps，选项文本显示当前采样率下的实际延迟（48kHz 时约 21.3 / 42.7 / 85.3 ms）。taps 越大，频率分辨率越高、深 null 越容易做出来，但 PDC 延迟越大；切换时插件会上报新的延迟，宿主可能重新同步播放位置。默认 4096。
 - **NODE**：拖动控制点；双击空白加点；右键点击控制点删除。
 - **ERASE**：在局部把曲线擦回 0。
 - **L / ST / R**：L 只编辑左通道，R 只编辑右通道，ST 同时写入两侧。
@@ -73,11 +73,11 @@ cmake --build Build --config Release --target Polarity_VST3 Polarity_Standalone 
   - 关掉 SPECTRUM 后 POLARITY 仍会显示底部极性条；两个都关则完全隐藏。
 - 底部 **WAVEFORM**：灰蓝 = 输入，墨绿 = 输出；RMS 包络与零轴之间填充。
   - 头部 **NORM / DELTA** 输出模式：NORM 为正常处理；DELTA 实际输出 **input − output**（被移走/反相的部分）。波形/频谱/M-S 的 OUT 都跟随实际监听输出。
-  - `WAVE` 下拉：**500 ms / 1 s / 2 s / 3 s / 5 s**，默认 **1 s**。
-  - 波形只保留 **IN / OUT** 两条；`METRIC` 可选 **RMS / PEAK**（Peak = 每个时间桶的 max(|min|,|max|)，RMS 更平滑）。
-  - 面板左侧有 0 / −20 / −40 / −60 dB 刻度和水平网格，底部有时间轴（−1 s … 0）；面板高度提高到 170–210px。
+  - 面板头部右侧的 `WAVE` 下拉：**500 ms / 1 s / 2 s / 3 s / 5 s**，默认 **1 s**。
+  - 波形只保留 **IN / OUT** 两条；同一行的 `METRIC` 可选 **RMS / PEAK**（Peak = 每个时间桶的 max(|min|,|max|)，RMS 更平滑）。
+  - 面板左侧有 0 / −20 / −40 / −60 dB 刻度和水平网格，底部有时间轴（−1 s … 0）；面板高度 170–210px。
   - **单击波形区域冻结当前快照，再单击恢复实时**；冻结时标题和提示变黄，并保持冻结时的窗口毫秒数。
-  - **切换 WAVE 时间窗会自动解除冻结**，应用新窗口；面板右上角显示实际毫秒数。
+  - **切换 WAVE 时间窗会自动解除冻结**，应用新窗口；当前窗口由 WAVE 下拉本身显示。
   - 指标选择存进插件状态（非自动化参数），工程/预设恢复时保留。
   - 频谱与波形使用 L/R 单声道和；左右差异大时结合右侧 M/S 表判断。
 - **PRESET**：顶部输入名字后点 SAVE；下拉选择即加载。预设保存在
@@ -91,7 +91,8 @@ cmake --build Build --config Release --target Polarity_VST3 Polarity_Standalone 
 
 - 模式按钮放在浅沙色底板里：未选中透明、选中墨底纸字；`SAVE` 为朱红底纸字；Undo/Redo 为幽灵文字。
 - 字体层级统一为四级：品牌 26 / 主要 13（副标题、鼠标读数）/ 控件 12（按钮、下拉、字段名、预设、滑杆数值）/ 注释 11（频率/反相量/dBFS 刻度、M/S、波形标题/提示、警告）；最小字号不低于 11。
-- 布局：品牌 / 预设+保存+NORM|DELTA+旁通；副标题 + SLOPE/SMOOTH/TIME；A|B + L/ST/R + 工具在左，Undo/Redo + SPECTRUM/POLARITY 在右；主区曲线 + 瘦身 M/S；下方 WAVEFORM；底栏 MIX 左，QUALITY / EDGE / METRIC / WAVE 右。
+- 布局原则是“设置就近”：副标题 + `SPECTRUM|POLARITY` + SLOPE/SMOOTH/TIME 同处分析器行；A|B + L/ST/R + 工具在左，Undo/Redo 在右；主区曲线 + 瘦身 M/S；波形面板头部放 WAVE/METRIC；底栏 MIX 左，QUALITY/EDGE 收进右侧 FIR 分组底板。
+- 窗口默认 960×720，最小 920×640；最小宽度保证 13pt 副标题与频谱簇不重叠。
 - **统一左基准线**：标题、副标题、A/B、曲线 20Hz Y 轴、波形面板左缘、MIX 都落在同一条 40px 竖线上；左侧 40px 作为品牌斜杠 + INV/1.5/NULL/0.5 刻度槽。
 - **统一右基准线**：WAVEFORM 面板右缘与 M/S 面板右缘对齐，外框和内绘图区都参与对齐。
 - L = 钴蓝，R = 朱红，ST = 紫；频谱输入灰蓝、输出墨绿；热力图浅蓝 → 钴蓝 → 沙色 → 橙 → 朱红。
