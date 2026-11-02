@@ -1,6 +1,7 @@
 #include "MeterPanel.h"
 
 #include "../PluginProcessor.h"
+#include "PolarityTheme.h"
 
 #include <cmath>
 
@@ -18,45 +19,69 @@ void MeterPanel::timerCallback()
 
 void MeterPanel::paint (juce::Graphics& g)
 {
-    g.fillAll (juce::Colour (0xff111318));
+    g.fillAll (polarity::theme::paper);
 
-    auto area = getLocalBounds().toFloat().reduced (4.0f);
-    g.setColour (juce::Colour (0xff171a20));
-    g.fillRoundedRectangle (area, 5.0f);
+    auto area = getLocalBounds().toFloat().reduced (8.0f);
 
-    auto inner = area.reduced (5.0f);
+    juce::DropShadow shadow (juce::Colour (0x12000000), 6, { 0, 2 });
+    juce::Path panelPath;
+    panelPath.addRoundedRectangle (area, 8.0f);
+    shadow.drawForPath (g, panelPath);
+
+    g.setColour (polarity::theme::panel);
+    g.fillRoundedRectangle (area, 8.0f);
+
+    auto inner = area.reduced (6.0f);
 
     auto title = inner.removeFromTop (14.0f);
-    g.setColour (juce::Colour (0xff7a818c));
-    g.setFont (juce::Font (juce::FontOptions (9.0f)));
+    g.setColour (polarity::theme::secondary);
+    g.setFont (juce::Font (juce::FontOptions (10.0f)));
     g.drawText ("M / S", title, juce::Justification::centred, false);
 
     auto corrArea = inner.removeFromBottom (30.0f);
 
     auto bars = inner;
-    auto midBar = bars.removeFromLeft (bars.getWidth() * 0.5f).reduced (3.0f);
-    auto sideBar = bars.reduced (3.0f);
+    auto labelRow = bars.removeFromTop (11.0f);
+    auto valueRow = bars.removeFromBottom (11.0f);
+    const float halfWidth = bars.getWidth() * 0.5f;
+    auto midColumn = bars.removeFromLeft (halfWidth);
+    auto sideColumn = bars;
+    const float barWidth = juce::jmin (22.0f, halfWidth * 0.58f);
+    auto midBar = midColumn.withSizeKeepingCentre (barWidth, midColumn.getHeight());
+    auto sideBar = sideColumn.withSizeKeepingCentre (barWidth, sideColumn.getHeight());
 
-    drawBar (g, midBar, processorRef.getMeterMidDb(),
-             juce::Colour (0xff4da3ff), "M");
-    drawBar (g, sideBar, processorRef.getMeterSideDb(),
-             juce::Colour (0xffb58cff), "S");
+    drawBar (g, midBar, processorRef.getMeterMidDb(), polarity::theme::cobalt);
+    drawBar (g, sideBar, processorRef.getMeterSideDb(), polarity::theme::violet);
+
+    g.setFont (juce::Font (juce::FontOptions (10.0f)));
+    g.setColour (polarity::theme::secondary);
+
+    auto midLabel = labelRow.removeFromLeft (halfWidth);
+    g.drawText ("M", midLabel, juce::Justification::centred, false);
+    g.drawText ("S", labelRow, juce::Justification::centred, false);
+
+    g.setColour (polarity::theme::ink);
+    auto midValue = valueRow.removeFromLeft (halfWidth);
+    g.drawText (juce::String (juce::roundToInt (processorRef.getMeterMidDb())),
+                midValue, juce::Justification::centred, false);
+    g.drawText (juce::String (juce::roundToInt (processorRef.getMeterSideDb())),
+                valueRow, juce::Justification::centred, false);
 
     const float correlation = processorRef.getMeterCorrelation();
     const juce::Colour correlationColour =
-        correlation < -0.1f ? juce::Colour (0xffff6b6b)
-                            : (correlation < 0.1f ? juce::Colour (0xffffcc66)
-                                                  : juce::Colour (0xff6fd08c));
+        correlation < -0.1f ? polarity::theme::vermilion
+                            : (correlation < 0.1f ? polarity::theme::amber
+                                                  : polarity::theme::teal);
 
     g.setColour (correlationColour);
-    g.setFont (juce::Font (juce::FontOptions (9.0f)));
+    g.setFont (juce::Font (juce::FontOptions (10.0f)));
     g.drawText ("CORR " + juce::String (correlation, 2),
                 corrArea.removeFromTop (14.0f),
                 juce::Justification::centred,
                 false);
 
     auto correlationBar = corrArea.removeFromTop (5.0f).reduced (4.0f, 0.0f);
-    g.setColour (juce::Colour (0xff252a33));
+    g.setColour (polarity::theme::panelAlt);
     g.fillRect (correlationBar);
 
     const float centre = correlationBar.getCentreX();
@@ -70,23 +95,14 @@ void MeterPanel::paint (juce::Graphics& g)
 void MeterPanel::drawBar (juce::Graphics& g,
                           juce::Rectangle<float> rect,
                           float db,
-                          juce::Colour colour,
-                          const juce::String& label)
+                          juce::Colour colour)
 {
-    g.setColour (juce::Colour (0xff20252d));
-    g.fillRoundedRectangle (rect, 3.0f);
+    g.setColour (polarity::theme::panelAlt);
+    g.fillRoundedRectangle (rect, 2.0f);
 
     const float amount = juce::jlimit (0.0f, 1.0f, (db + 60.0f) / 66.0f);
     auto fill = rect.withTop (rect.getBottom() - rect.getHeight() * amount);
 
     g.setColour (colour);
-    g.fillRoundedRectangle (fill, 3.0f);
-
-    g.setColour (juce::Colour (0xffd7dde6));
-    g.setFont (juce::Font (juce::FontOptions (9.0f)));
-    g.drawText (label, rect.removeFromTop (12.0f),
-                juce::Justification::centred, false);
-    g.drawText (juce::String (juce::roundToInt (db)),
-                rect.removeFromBottom (12.0f),
-                juce::Justification::centred, false);
+    g.fillRoundedRectangle (fill, 2.0f);
 }

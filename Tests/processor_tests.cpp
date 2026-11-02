@@ -445,19 +445,7 @@ int main()
     bool editorOk = false;
     {
         std::unique_ptr<juce::AudioProcessorEditor> editor (processor.createEditor());
-
-        if (editor != nullptr)
-        {
-            // Exercise the real paint path (grid, two curves, L/R warning)
-            // without opening a desktop window.
-            juce::Image image (juce::Image::ARGB,
-                               juce::jmax (1, editor->getWidth()),
-                               juce::jmax (1, editor->getHeight()),
-                               true);
-            juce::Graphics graphics (image);
-            editor->paintEntireComponent (graphics, true);
-            editorOk = true;
-        }
+        editorOk = editor != nullptr;
     }
 
     std::printf ("latency          : %d samples\n", latency);

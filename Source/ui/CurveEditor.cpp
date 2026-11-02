@@ -1,6 +1,7 @@
 #include "CurveEditor.h"
 
 #include "../PluginProcessor.h"
+#include "PolarityTheme.h"
 
 #include <algorithm>
 #include <cmath>
@@ -11,18 +12,18 @@ constexpr double kMinFreq = 20.0;
 constexpr double kMaxFreq = 20000.0;
 constexpr double kMaxAmount = 2.0;
 
-const juce::Colour kBackground { 0xff111318 };
-const juce::Colour kPlot       { 0xff14171c };
-const juce::Colour kGrid       { 0xff232832 };
-const juce::Colour kNullLine   { 0xff4a5464 };
-const juce::Colour kTextDim    { 0xff7a818c };
-const juce::Colour kText       { 0xffc9ced6 };
-const juce::Colour kLeft       { 0xff4da3ff };
-const juce::Colour kRight      { 0xffff6b6b };
-const juce::Colour kStereo     { 0xffb58cff };
-const juce::Colour kWarning    { 0xffffcc66 };
-const juce::Colour kSpecInput  { 0x99a7c7d6 };
-const juce::Colour kSpecOutput { 0xff8fe8ff };
+const juce::Colour kBackground = polarity::theme::paper;
+const juce::Colour kPlot       = polarity::theme::paperBright;
+const juce::Colour kGrid       = polarity::theme::grid;
+const juce::Colour kNullLine   = polarity::theme::gridStrong;
+const juce::Colour kTextDim    = polarity::theme::secondary;
+const juce::Colour kText       = polarity::theme::ink;
+const juce::Colour kLeft       = polarity::theme::cobalt;
+const juce::Colour kRight      = polarity::theme::vermilion;
+const juce::Colour kStereo     = polarity::theme::violet;
+const juce::Colour kWarning    = polarity::theme::amber;
+const juce::Colour kSpecInput  = polarity::theme::secondary.withAlpha (0.70f);
+const juce::Colour kSpecOutput = polarity::theme::teal;
 } // namespace
 
 CurveEditor::CurveEditor (PolarityAudioProcessor& processor)
@@ -203,6 +204,7 @@ juce::Rectangle<float> CurveEditor::plotArea() const
 {
     return getLocalBounds().toFloat()
         .reduced (6.0f)
+        .withTrimmedTop (8.0f)
         .withTrimmedLeft (34.0f)
         .withTrimmedRight (32.0f)
         .withTrimmedBottom (18.0f);
@@ -249,11 +251,11 @@ float CurveEditor::dbToY (float db, juce::Rectangle<float> area)
 
 juce::Colour CurveEditor::amountToColour (double amount)
 {
-    const juce::Colour zero     { 0xff14243a };
-    const juce::Colour half     { 0xff2d7dd2 };
-    const juce::Colour null     { 0xffd6dde6 };
-    const juce::Colour inverted { 0xffff9f43 };
-    const juce::Colour full     { 0xffff3b6b };
+    const juce::Colour zero     { 0xffdce6f0 };
+    const juce::Colour half     { 0xff5b8def };
+    const juce::Colour null     { 0xffe4d6b8 };
+    const juce::Colour inverted { 0xfff29e4c };
+    const juce::Colour full     { 0xffd64627 };
 
     const double a = juce::jlimit (0.0, 2.0, amount);
 
@@ -314,12 +316,12 @@ void CurveEditor::drawSpectrumFill (juce::Graphics& g,
             if (y >= area.getBottom() - 0.5f)
                 continue;
 
-            juce::Colour colour = juce::Colour (0xff4da3ff).withAlpha (0.10f);
+            juce::Colour colour = polarity::theme::cobalt.withAlpha (0.08f);
 
             if (polarityVisible)
             {
                 const double freq = xToFreq (x);
-                colour = amountToColour (heatModel.amountAt (freq)).withAlpha (0.30f);
+                colour = amountToColour (heatModel.amountAt (freq)).withAlpha (0.32f);
             }
 
             g.setColour (colour);
@@ -406,7 +408,7 @@ void CurveEditor::drawDbScale (juce::Graphics& g,
     g.setColour (kGrid);
     g.drawVerticalLine (juce::roundToInt (x), area.getY(), area.getBottom());
 
-    g.setFont (juce::Font (juce::FontOptions (8.0f)));
+    g.setFont (juce::Font (juce::FontOptions (9.5f)));
 
     for (int db = 0; db >= -100; db -= 20)
     {
@@ -434,12 +436,17 @@ void CurveEditor::paint (juce::Graphics& g)
     g.fillAll (kBackground);
 
     const auto area = plotArea();
+    juce::DropShadow shadow (juce::Colour (0x14000000), 10, { 0, 3 });
+    juce::Path panelPath;
+    panelPath.addRoundedRectangle (area, 8.0f);
+    shadow.drawForPath (g, panelPath);
+
     g.setColour (kPlot);
-    g.fillRoundedRectangle (area, 5.0f);
+    g.fillRoundedRectangle (area, 8.0f);
 
     drawSpectrumFill (g, area);
 
-    g.setFont (juce::Font (juce::FontOptions (10.0f)));
+    g.setFont (juce::Font (juce::FontOptions (10.5f)));
 
     const double freqs[] = { 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000 };
 
@@ -541,7 +548,7 @@ void CurveEditor::paint (juce::Graphics& g)
         }
 
         g.setColour (kText);
-        g.setFont (juce::Font (juce::FontOptions (12.0f)));
+        g.setFont (juce::Font (juce::FontOptions (12.5f)));
         g.drawText (text,
                     area.reduced (8.0f).removeFromTop (18.0f).toNearestInt(),
                     juce::Justification::left,
@@ -551,12 +558,13 @@ void CurveEditor::paint (juce::Graphics& g)
     if (curvesDiffer())
     {
         g.setColour (kWarning);
-        g.setFont (juce::Font (juce::FontOptions (11.0f)));
+        g.setFont (juce::Font (juce::FontOptions (11.5f)));
         g.drawText ("L/R differ - check mono",
                     area.reduced (8.0f).removeFromTop (18.0f).toNearestInt(),
                     juce::Justification::right,
                     false);
     }
+
 }
 
 void CurveEditor::paintCurve (juce::Graphics& g,
@@ -602,7 +610,7 @@ void CurveEditor::paintCurve (juce::Graphics& g,
 
         g.setColour (colour);
         g.fillEllipse (x - 3.5f, y - 3.5f, 7.0f, 7.0f);
-        g.setColour (juce::Colours::white.withAlpha (0.75f));
+        g.setColour (polarity::theme::paperBright.withAlpha (0.90f));
         g.drawEllipse (x - 3.5f, y - 3.5f, 7.0f, 7.0f, 1.0f);
     }
 }

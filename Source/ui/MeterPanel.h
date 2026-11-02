@@ -19,8 +19,7 @@ private:
     static void drawBar (juce::Graphics&,
                          juce::Rectangle<float>,
                          float db,
-                         juce::Colour,
-                         const juce::String& label);
+                         juce::Colour);
 
     PolarityAudioProcessor& processorRef;
 

@@ -1,18 +1,19 @@
 #include "WaveformPanel.h"
 
 #include "../PluginProcessor.h"
+#include "PolarityTheme.h"
 
 #include <algorithm>
 #include <cmath>
 
 namespace
 {
-const juce::Colour kPanel  { 0xff0f1216 };
-const juce::Colour kGrid   { 0xff20262f };
-const juce::Colour kDim    { 0xff737b88 };
-const juce::Colour kInput  { 0x99a7c7d6 };
-const juce::Colour kOutput { 0xff8fe8ff };
-const juce::Colour kWarning { 0xffffcc66 };
+const juce::Colour kPanel  = polarity::theme::paperBright;
+const juce::Colour kGrid   = polarity::theme::grid;
+const juce::Colour kDim    = polarity::theme::secondary;
+const juce::Colour kInput  { 0xff8fa1ae };
+const juce::Colour kOutput = polarity::theme::teal;
+const juce::Colour kWarning = polarity::theme::amber;
 } // namespace
 
 WaveformPanel::WaveformPanel (PolarityAudioProcessor& processor)
@@ -73,21 +74,27 @@ float WaveformPanel::outputRmsAt (int point) const
 
 void WaveformPanel::paint (juce::Graphics& g)
 {
-    g.fillAll (juce::Colour (0xff111318));
+    g.fillAll (polarity::theme::paper);
 
-    auto area = getLocalBounds().toFloat().reduced (4.0f);
-    g.setColour (juce::Colour (0xff171a20));
-    g.fillRoundedRectangle (area, 5.0f);
+    auto area = getLocalBounds().toFloat().reduced (8.0f);
+
+    juce::DropShadow shadow (juce::Colour (0x12000000), 6, { 0, 2 });
+    juce::Path panelPath;
+    panelPath.addRoundedRectangle (area, 8.0f);
+    shadow.drawForPath (g, panelPath);
+
+    g.setColour (polarity::theme::panel);
+    g.fillRoundedRectangle (area, 8.0f);
 
     auto inner = area.reduced (6.0f);
     auto header = inner.removeFromTop (12.0f);
 
-    g.setFont (juce::Font (juce::FontOptions (9.0f)));
+    g.setFont (juce::Font (juce::FontOptions (10.0f)));
     g.setColour (frozen ? kWarning : kDim);
     g.drawText ("WAVEFORM  /  RMS", header.toNearestInt(),
                 juce::Justification::left, false);
 
-    g.setFont (juce::Font (juce::FontOptions (8.0f)));
+    g.setFont (juce::Font (juce::FontOptions (9.5f)));
     g.setColour (frozen ? kWarning : kDim.withAlpha (0.55f));
     g.drawText (frozen ? "FROZEN - click to resume" : "click to freeze",
                 header.withTrimmedLeft (110.0f).withTrimmedRight (110.0f)
@@ -117,7 +124,7 @@ void WaveformPanel::paint (juce::Graphics& g)
 
     auto plot = inner;
     g.setColour (kPanel);
-    g.fillRoundedRectangle (plot, 3.0f);
+    g.fillRoundedRectangle (plot, 6.0f);
 
     const float centre = plot.getCentreY();
     g.setColour (kGrid);
@@ -184,10 +191,10 @@ void WaveformPanel::paint (juce::Graphics& g)
     inputEnvelope.closeSubPath();
     outputEnvelope.closeSubPath();
 
-    g.setColour (kInput.withAlpha (0.10f));
+    g.setColour (kInput.withAlpha (0.06f));
     g.fillPath (inputEnvelope);
 
-    g.setColour (kOutput.withAlpha (0.22f));
+    g.setColour (kOutput.withAlpha (0.16f));
     g.fillPath (outputEnvelope);
 
     g.setColour (kInput.withAlpha (0.80f));

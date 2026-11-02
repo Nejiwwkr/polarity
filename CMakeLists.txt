@@ -40,6 +40,9 @@ target_sources(Polarity PRIVATE
     Source/dsp/InversionEngine.h
     Source/ui/CurveEditor.cpp
     Source/ui/CurveEditor.h
+    Source/ui/PolarityLookAndFeel.cpp
+    Source/ui/PolarityLookAndFeel.h
+    Source/ui/PolarityTheme.h
     Source/ui/MeterPanel.cpp
     Source/ui/MeterPanel.h
     Source/ui/WaveformPanel.cpp
@@ -84,6 +87,9 @@ target_sources(PolarityTests PRIVATE
     Source/dsp/InversionEngine.h
     Source/ui/CurveEditor.cpp
     Source/ui/CurveEditor.h
+    Source/ui/PolarityLookAndFeel.cpp
+    Source/ui/PolarityLookAndFeel.h
+    Source/ui/PolarityTheme.h
     Source/ui/MeterPanel.cpp
     Source/ui/MeterPanel.h
     Source/ui/WaveformPanel.cpp

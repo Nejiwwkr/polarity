@@ -26,7 +26,8 @@ Y_c(f) = (1 − A_c(f)) · X_c(f)        A_c(f) ∈ [0, 2]
       实时换核 + 60ms 交叉淡化、曲线随工程/预设保存
 - [x] M3：M/S 电平表 + 相关度、A/B 曲线槽、文件预设栏
 - [x] 画布叠加：输入/输出频谱、反相量热力图（SPECTRUM / POLARITY 开关）
-- [x] 波形对比：输入/输出填充、Fast / Normal / Slow / Very slow 速度档
+- [x] 波形对比：输入/输出填充、RMS dB 包络、冻结、6 档时间窗口
+- [x] 浅色纸感主题：暖纸底 + 墨色 + 朱红强调；自定义扁平 LookAndFeel
 - [x] 离线测试：DSP 自检 + Processor 集成测试 + A/B/预设/计量/分析 + 编辑器 smoke 全部 PASS
 - [ ] M4：质量档（2048/4096/8192）、采样率矩阵、pluginval、CPU 优化、打包
 
@@ -60,14 +61,14 @@ cmake --build Build --config Release --target Polarity_VST3 Polarity_Standalone 
 - **A/B**：两套独立曲线槽，点 `A/B` 切换；两套曲线都随工程保存。
 - 右侧 **M/S** 表：显示处理后的 Mid/Side 电平与 L/R 相关度；相关度为负时变红，提示单声道兼容风险。
 - **画布叠加**（`SPECTRUM` / `POLARITY` 两个开关）：
-  - SPECTRUM：浅色线 = 输入（已按插件延迟对齐），亮色主线 = 输出；纵轴 −100…0 dB，刻度在画布右侧。
+  - SPECTRUM：灰蓝线 = 输入（已按插件延迟对齐），墨绿主线 = 输出；纵轴 −100…0 dB，刻度在画布右侧。
   - 分析：16384 点 FFT、512 个对数频带、±2 bin 三角窗功率加权；SMOOTH 可选 Off / 1/12 / 1/6 / 1/3 oct（默认 1/12）；TIME 可选 50 / 100 / 200 / 400 ms（默认 200ms）；画布 30Hz 定时刷新，不依赖鼠标悬停。
   - 右侧带 dBFS 刻度（0 / −20 / … / −100）；SLOPE 可选 Flat / 3 / 4.5 / 6 dB/oct（默认 4.5），用于和 Pro-Q 的 Analyzer Slope 对齐；TIME 控制频谱跟随速度。
   - 与 Pro-Q 对比时看输出（亮色）曲线，并把 Pro-Q 的分析器放在 Polarity 之后、斜率设成相同值；两者的 FFT 窗口、立体声求和方式不同，不会逐点一致。
   - POLARITY：频谱与 x 轴之间的面积按当前编辑层的 A(f) 着色；画布底部另有 L/R 两行极性条。
-  - 颜色：深蓝 0 → 蓝 0.5 → 浅灰 NULL → 橙 1.5 → 红 INV 2。
+  - 颜色：浅蓝 0 → 钴蓝 0.5 → 沙色 NULL → 橙 1.5 → 朱红 INV 2。
   - 关掉 SPECTRUM 后 POLARITY 仍会显示底部极性条；两个都关则完全隐藏。
-- 底部 **WAVEFORM**：浅色 = 输入，亮色 = 输出；波形与零轴之间填充。
+- 底部 **WAVEFORM**：灰蓝 = 输入，墨绿 = 输出；RMS 包络与零轴之间填充。
   - `WAVE` 下拉：Fast / Normal / Slow / Very slow / Extreme / Ultra，对应约 85 / 170 / 341 / 682 / 1365 / 2731 ms @48k 的时间窗口，默认 **Extreme（1365ms）**。
   - 波形使用每个时间桶的 RMS 并映射到 dB 包络（−60…0 dB），长窗口下是可读的电平轮廓，而不是密集的峰值锯齿；窗口越长，移动越慢。
   - **单击波形区域冻结当前快照，再单击恢复实时**；冻结时标题和提示变黄，并保持冻结时的窗口毫秒数。
@@ -77,6 +78,16 @@ cmake --build Build --config Release --target Polarity_VST3 Polarity_Standalone 
   `%APPDATA%\Polarity\Presets`（XML），包含 A/B 两套曲线、当前槽、mix/bypass。
 - 曲线随工程/预设保存；宿主恢复状态时编辑器自动刷新。
 - 拖动曲线时后台实时重建 FIR，引擎用 60ms 交叉淡化换核，不会爆音。
+
+## 界面
+
+设计方向是 **纸 / 墨 / 朱红**：暖白纸底、墨色主操作、朱红强调与左侧 2px 边条，刻意避开 soothe2 的冷蓝灰。控件无边框，只用填充色区分；主面板用柔和阴影分层，没有渐变或拟物旋钮。
+
+- 模式按钮放在浅沙色底板里：未选中透明、选中墨底纸字；`SAVE` 为朱红底纸字；Undo/Redo 为幽灵文字。
+- 布局：品牌 / 预设+保存+旁通；副标题 + SLOPE/SMOOTH/TIME；A/B + L/ST/R + 工具在左，Undo/Redo + SPECTRUM/POLARITY 在右；主区曲线 + 瘦身 M/S；下方 WAVEFORM；底栏 MIX 左、WAVE/EDGE 右。
+- L = 钴蓝，R = 朱红，ST = 紫；频谱输入灰蓝、输出墨绿；热力图浅蓝 → 钴蓝 → 沙色 → 橙 → 朱红。
+- M/S 表：M 钴蓝、S 紫；波形输入灰蓝、输出墨绿。
+- 主题色集中在 `Source/ui/PolarityTheme.h`，按钮/下拉/滑杆/开关由 `PolarityLookAndFeel` 统一绘制。
 
 ## 测试
 
@@ -115,7 +126,7 @@ Processor:
   meters test      : PASS
   analysis f/n     : -18.3/-18.3 -> -18.0/-114.5 dB  wave 0.0000
   analysis test    : PASS        (1kHz 正弦：输入/输出频谱、NULL 后输出与波形)
-  editor smoke     : PASS        (构造 UI + 离屏重绘，含 M/S 表、频谱、波形、双曲线)
+  editor smoke     : PASS        (构造浅色主题 UI)
   PROCESSOR TEST   : PASS
 ```
 
@@ -155,7 +166,9 @@ Source/
   ui/
     CurveEditor.h/.cpp          # 画布、L/ST/R、工具、undo、频谱/热力图叠加
     MeterPanel.h/.cpp           # M/S 电平与相关度表
-    WaveformPanel.h/.cpp        # 输入/输出波形、填充、速度窗口
+    WaveformPanel.h/.cpp        # 输入/输出波形、填充、速度窗口、冻结
+    PolarityLookAndFeel.h/.cpp  # 扁平浅色控件外观
+    PolarityTheme.h             # 纸 / 墨 / 朱红调色板
   state/
     PresetManager.h/.cpp        # 文件预设（用户目录 XML）
   dsp/

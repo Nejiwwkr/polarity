@@ -5,6 +5,7 @@
 #include "state/PresetManager.h"
 #include "ui/WaveformPanel.h"
 #include "ui/CurveEditor.h"
+#include "ui/PolarityLookAndFeel.h"
 #include "ui/MeterPanel.h"
 
 class PolarityAudioProcessor;
@@ -13,7 +14,7 @@ class PolarityAudioProcessorEditor final : public juce::AudioProcessorEditor
 {
 public:
     explicit PolarityAudioProcessorEditor (PolarityAudioProcessor&);
-    ~PolarityAudioProcessorEditor() override = default;
+    ~PolarityAudioProcessorEditor() override;
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -25,6 +26,7 @@ private:
     static void styleCombo (juce::ComboBox&);
 
     PolarityAudioProcessor& processorRef;
+    PolarityLookAndFeel lookAndFeel;
 
     juce::Label titleLabel;
     juce::Label subtitleLabel;
