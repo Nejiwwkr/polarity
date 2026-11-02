@@ -586,13 +586,6 @@ void PolarityAudioProcessorEditor::resized()
     placeAnalyzer (smoothCaption, smoothBox, 58, 90);
     analyzerControls.removeFromRight (8);
     placeAnalyzer (slopeCaption, slopeBox, 44, 90);
-    analyzerControls.removeFromRight (16);
-
-    polarityButton.setBounds (analyzerControls.removeFromRight (84)
-                                  .reduced (0, comboPad));
-    analyzerControls.removeFromRight (2);
-    spectrumButton.setBounds (analyzerControls.removeFromRight (90)
-                                  .reduced (0, comboPad));
 
     subtitleLabel.setBounds (analyzerControls.withTrimmedLeft (28)
                                  .reduced (0, 4));
@@ -601,7 +594,7 @@ void PolarityAudioProcessorEditor::resized()
 
     auto controls = area.removeFromTop (38);
     auto row = controls.reduced (0, 4);
-    row.removeFromRight (3);
+    const int curveEditorRight = area.getRight() - 82 - 12;
     row.removeFromLeft (28);
 
     const auto takeLeft = [&] (int width)
@@ -609,16 +602,6 @@ void PolarityAudioProcessorEditor::resized()
         auto r = row.removeFromLeft (width);
         return r;
     };
-
-    const auto takeRight = [&] (int width)
-    {
-        auto r = row.removeFromRight (width);
-        return r;
-    };
-
-    redoButton.setBounds (takeRight (54));
-    row.removeFromRight (4);
-    undoButton.setBounds (takeRight (54));
 
     slotAButton.setBounds (takeLeft (40));
     row.removeFromLeft (2);
@@ -638,6 +621,17 @@ void PolarityAudioProcessorEditor::resized()
     toolNode.setBounds (takeLeft (60));
     row.removeFromLeft (2);
     toolErase.setBounds (takeLeft (64));
+
+    row.removeFromLeft (18);
+    undoButton.setBounds (takeLeft (54));
+    row.removeFromLeft (4);
+    redoButton.setBounds (takeLeft (54));
+
+    // Anchor the spectrum toggles' plate to the spectrum panel's right edge.
+    auto spectrumCluster = row.withRight (curveEditorRight - 3);
+    polarityButton.setBounds (spectrumCluster.removeFromRight (84));
+    spectrumCluster.removeFromRight (2);
+    spectrumButton.setBounds (spectrumCluster.removeFromRight (90));
 
     area.removeFromTop (8);
 
