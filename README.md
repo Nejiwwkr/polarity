@@ -28,6 +28,7 @@ Y_c(f) = (1 − A_c(f)) · X_c(f)        A_c(f) ∈ [0, 2]
 - [x] 画布叠加：输入/输出频谱、反相量热力图（SPECTRUM / POLARITY 开关）
 - [x] 波形对比：输入/输出填充、RMS dB 包络、冻结、6 档时间窗口
 - [x] 浅色纸感主题：暖纸底 + 墨色 + 朱红强调；自定义扁平 LookAndFeel
+- [x] 输出 NORM / DELTA 双模式；波形 RMS / PEAK 指标可选
 - [x] 离线测试：DSP 自检 + Processor 集成测试 + A/B/预设/计量/分析 + 编辑器 smoke 全部 PASS
 - [ ] M4：质量档（2048/4096/8192）、采样率矩阵、pluginval、CPU 优化、打包
 
@@ -69,10 +70,13 @@ cmake --build Build --config Release --target Polarity_VST3 Polarity_Standalone 
   - 颜色：浅蓝 0 → 钴蓝 0.5 → 沙色 NULL → 橙 1.5 → 朱红 INV 2。
   - 关掉 SPECTRUM 后 POLARITY 仍会显示底部极性条；两个都关则完全隐藏。
 - 底部 **WAVEFORM**：灰蓝 = 输入，墨绿 = 输出；RMS 包络与零轴之间填充。
-  - `WAVE` 下拉：Fast / Normal / Slow / Very slow / Extreme / Ultra，对应约 85 / 170 / 341 / 682 / 1365 / 2731 ms @48k 的时间窗口，默认 **Extreme（1365ms）**。
-  - 波形使用每个时间桶的 RMS 并映射到 dB 包络（−60…0 dB），长窗口下是可读的电平轮廓，而不是密集的峰值锯齿；窗口越长，移动越慢。
+  - 头部 **NORM / DELTA** 输出模式：NORM 为正常处理；DELTA 实际输出 **input − output**（被移走/反相的部分）。波形/频谱/M-S 的 OUT 都跟随实际监听输出。
+  - `WAVE` 下拉：**500 ms / 1 s / 2 s / 3 s / 5 s**，默认 **1 s**。
+  - 波形只保留 **IN / OUT** 两条；`METRIC` 可选 **RMS / PEAK**（Peak = 每个时间桶的 max(|min|,|max|)，RMS 更平滑）。
+  - 面板左侧有 0 / −20 / −40 / −60 dB 刻度和水平网格，底部有时间轴（−1 s … 0）；面板高度提高到 170–210px。
   - **单击波形区域冻结当前快照，再单击恢复实时**；冻结时标题和提示变黄，并保持冻结时的窗口毫秒数。
-  - 面板右上角显示实际毫秒数。
+  - **切换 WAVE 时间窗会自动解除冻结**，应用新窗口；面板右上角显示实际毫秒数。
+  - 指标选择存进插件状态（非自动化参数），工程/预设恢复时保留。
   - 频谱与波形使用 L/R 单声道和；左右差异大时结合右侧 M/S 表判断。
 - **PRESET**：顶部输入名字后点 SAVE；下拉选择即加载。预设保存在
   `%APPDATA%\Polarity\Presets`（XML），包含 A/B 两套曲线、当前槽、mix/bypass。
@@ -85,7 +89,7 @@ cmake --build Build --config Release --target Polarity_VST3 Polarity_Standalone 
 
 - 模式按钮放在浅沙色底板里：未选中透明、选中墨底纸字；`SAVE` 为朱红底纸字；Undo/Redo 为幽灵文字。
 - 字体层级统一为四级：品牌 26 / 主要 13（副标题、鼠标读数）/ 控件 12（按钮、下拉、字段名、预设、滑杆数值）/ 注释 11（频率/反相量/dBFS 刻度、M/S、波形标题/提示、警告）；最小字号不低于 11。
-- 布局：品牌 / 预设+保存+旁通；副标题 + SLOPE/SMOOTH/TIME；A/B + L/ST/R + 工具在左，Undo/Redo + SPECTRUM/POLARITY 在右；主区曲线 + 瘦身 M/S；下方 WAVEFORM；底栏 MIX 左、WAVE/EDGE 右。
+- 布局：品牌 / 预设+保存+NORM|DELTA+旁通；副标题 + SLOPE/SMOOTH/TIME；A/B + L/ST/R + 工具在左，Undo/Redo + SPECTRUM/POLARITY 在右；主区曲线 + 瘦身 M/S；下方 WAVEFORM；底栏 MIX 左，METRIC/WAVE/EDGE 右。
 - **统一左基准线**：标题、副标题、A/B、曲线 20Hz Y 轴、波形面板左缘、MIX 都落在同一条 40px 竖线上；左侧 40px 作为品牌斜杠 + INV/1.5/NULL/0.5 刻度槽。
 - **统一右基准线**：WAVEFORM 面板右缘与 M/S 面板右缘对齐，外框和内绘图区都参与对齐。
 - L = 钴蓝，R = 朱红，ST = 紫；频谱输入灰蓝、输出墨绿；热力图浅蓝 → 钴蓝 → 沙色 → 橙 → 朱红。
@@ -129,6 +133,10 @@ Processor:
   meters test      : PASS
   analysis f/n     : -18.3/-18.3 -> -18.0/-114.5 dB  wave 0.0000
   analysis test    : PASS        (1kHz 正弦：输入/输出频谱、NULL 后输出与波形)
+  delta normal L/R : -96.2 / -0.0 dB
+  delta L/R        : -0.0 / -300.0 dB
+  delta A=2 L      : 6.0 dB
+  delta test       : PASS
   editor smoke     : PASS        (构造浅色主题 UI)
   PROCESSOR TEST   : PASS
 ```

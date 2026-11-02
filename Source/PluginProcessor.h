@@ -123,17 +123,29 @@ public:
             .load (std::memory_order_relaxed);
     }
 
-    /** Waveform time window in samples; 2048 .. 16384. */
-    void setWaveformWindow (int samples) noexcept
+    /** Waveform time window in milliseconds; 200 .. 5000. */
+    void setWaveformWindowMs (float milliseconds) noexcept
     {
-        waveformWindowSamples.store (
-            juce::jlimit (1024, maxWaveformSamples, samples),
-            std::memory_order_relaxed);
+        waveformWindowMs.store (juce::jlimit (200.0f, 5000.0f, milliseconds),
+                                std::memory_order_relaxed);
+    }
+
+    float getWaveformWindowMs() const noexcept
+    {
+        return waveformWindowMs.load (std::memory_order_relaxed);
     }
 
     int getWaveformWindowSamples() const noexcept
     {
-        return waveformWindowSamples.load (std::memory_order_relaxed);
+        const double sampleRate = currentSampleRate.load (std::memory_order_relaxed);
+
+        if (sampleRate <= 0.0 || maxWaveformSamples <= 0)
+            return 0;
+
+        const int samples = juce::roundToInt (
+            waveformWindowMs.load (std::memory_order_relaxed) * sampleRate / 1000.0);
+
+        return juce::jlimit (1024, maxWaveformSamples, samples);
     }
 
     /** Spectrum smoothing radius in log bands; 0 = off, 2 ~ 1/12 oct, 4 ~ 1/6, 8 ~ 1/3. */
@@ -193,6 +205,7 @@ private:
     juce::AudioProcessorValueTreeState apvts;
     std::atomic<float>* mixParam = nullptr;
     std::atomic<float>* bypassParam = nullptr;
+    std::atomic<float>* deltaOutParam = nullptr;
 
     mutable juce::CriticalSection curveLock;
     std::array<CurveSlot, 2> slots;
@@ -208,7 +221,7 @@ private:
     static constexpr int fftSize = 1 << fftOrder;
     static constexpr int spectrumBands = 512;
     static constexpr int waveformPoints = 512;
-    static constexpr int maxWaveformSamples = 131072;
+    int maxWaveformSamples = 1;
 
     juce::dsp::FFT analysisFft { fftOrder };
     std::vector<float> analysisWork;
@@ -217,7 +230,8 @@ private:
     std::vector<float> outputAnalysisRing;
     int inputAnalysisWrite = 0;
     int outputAnalysisWrite = 0;
-    std::atomic<int> waveformWindowSamples { 65536 };
+    std::atomic<float> waveformWindowMs { 1000.0f };
+    int waveformUpdateCounter = 0;
     std::atomic<int> spectrumSmoothingRadius { 2 };
     std::atomic<float> spectrumTimeSmoothingMs { 200.0f };
     std::atomic<int> curveSmoothingBins { 2 };
@@ -234,6 +248,9 @@ private:
     juce::AudioBuffer<float> dryCopy;
     std::vector<std::vector<float>> dryDelay;
     std::vector<int> dryDelayIndex;
+
+    std::array<float, 2> deltaAmounts { 0.0f, 0.0f };
+    float deltaSmoothingCoeff = 1.0f;
 
     static constexpr int numTaps = 4096;
 

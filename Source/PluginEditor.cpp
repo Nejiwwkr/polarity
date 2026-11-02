@@ -142,6 +142,28 @@ PolarityAudioProcessorEditor::PolarityAudioProcessorEditor (PolarityAudioProcess
     };
     addAndMakeVisible (abButton);
 
+    for (auto* button : { &normButton, &deltaButton })
+    {
+        styleButton (*button);
+        button->setColour (juce::TextButton::buttonColourId,
+                           juce::Colours::transparentBlack);
+        button->setClickingTogglesState (true);
+        button->setRadioGroupId (103);
+        addAndMakeVisible (*button);
+    }
+
+    normButton.onClick = [this]
+    {
+        setDeltaOut (false);
+        updateButtons();
+    };
+
+    deltaButton.onClick = [this]
+    {
+        setDeltaOut (true);
+        updateButtons();
+    };
+
     for (auto* button : { &layerLeft, &layerStereo, &layerRight })
     {
         styleButton (*button);
@@ -270,19 +292,19 @@ PolarityAudioProcessorEditor::PolarityAudioProcessorEditor (PolarityAudioProcess
     waveCaption.setColour (juce::Label::textColourId, polarity::theme::secondary);
     addAndMakeVisible (waveCaption);
 
-    waveSpeedBox.addItem ("Fast", 1);
-    waveSpeedBox.addItem ("Normal", 2);
-    waveSpeedBox.addItem ("Slow", 3);
-    waveSpeedBox.addItem ("Very slow", 4);
-    waveSpeedBox.addItem ("Extreme", 5);
-    waveSpeedBox.addItem ("Ultra", 6);
-    waveSpeedBox.setSelectedId (5, juce::dontSendNotification);
+    waveSpeedBox.addItem ("500 ms", 1);
+    waveSpeedBox.addItem ("1 s", 2);
+    waveSpeedBox.addItem ("2 s", 3);
+    waveSpeedBox.addItem ("3 s", 4);
+    waveSpeedBox.addItem ("5 s", 5);
+    waveSpeedBox.setSelectedId (2, juce::dontSendNotification);
     styleCombo (waveSpeedBox);
     waveSpeedBox.onChange = [this]
     {
-        static constexpr int samples[] = { 4096, 8192, 16384, 32768, 65536, 131072 };
-        const int index = juce::jlimit (0, 5, waveSpeedBox.getSelectedItemIndex());
-        processorRef.setWaveformWindow (samples[index]);
+        static constexpr float windows[] = { 500.0f, 1000.0f, 2000.0f, 3000.0f, 5000.0f };
+        const int index = juce::jlimit (0, 4, waveSpeedBox.getSelectedItemIndex());
+        processorRef.setWaveformWindowMs (windows[index]);
+        waveformPanel.setFrozen (false);
     };
     addAndMakeVisible (waveSpeedBox);
 
@@ -306,6 +328,33 @@ PolarityAudioProcessorEditor::PolarityAudioProcessorEditor (PolarityAudioProcess
     };
     addAndMakeVisible (edgeBox);
 
+    metricCaption.setText ("METRIC", juce::dontSendNotification);
+    metricCaption.setFont (juce::Font (juce::FontOptions (polarity::type::control)));
+    metricCaption.setJustificationType (juce::Justification::centredLeft);
+    metricCaption.setColour (juce::Label::textColourId, polarity::theme::secondary);
+    addAndMakeVisible (metricCaption);
+
+    styleCombo (metricBox);
+    metricBox.addItem ("RMS", 1);
+    metricBox.addItem ("PEAK", 2);
+
+    const int storedMetric = static_cast<int> (
+        processorRef.getValueTreeState().state.getProperty ("waveformMetric", 0));
+    metricBox.setSelectedId (storedMetric == 1 ? 2 : 1,
+                             juce::dontSendNotification);
+    waveformPanel.setMetric (storedMetric == 1
+                                 ? WaveformPanel::Metric::Peak
+                                 : WaveformPanel::Metric::Rms);
+    metricBox.onChange = [this]
+    {
+        const bool peak = metricBox.getSelectedItemIndex() == 1;
+        waveformPanel.setMetric (peak ? WaveformPanel::Metric::Peak
+                                      : WaveformPanel::Metric::Rms);
+        processorRef.getValueTreeState().state.setProperty (
+            "waveformMetric", peak ? 1 : 0, nullptr);
+    };
+    addAndMakeVisible (metricBox);
+
     statusLabel.setText (
         "heatmap: 0 blue / NULL light / INV red",
         juce::dontSendNotification);
@@ -313,6 +362,12 @@ PolarityAudioProcessorEditor::PolarityAudioProcessorEditor (PolarityAudioProcess
     statusLabel.setJustificationType (juce::Justification::centredRight);
     statusLabel.setColour (juce::Label::textColourId, polarity::theme::secondary);
 
+    updateButtons();
+    startTimerHz (15);
+}
+
+void PolarityAudioProcessorEditor::timerCallback()
+{
     updateButtons();
 }
 
@@ -327,6 +382,12 @@ void PolarityAudioProcessorEditor::styleButton (juce::TextButton& button)
     button.setColour (juce::TextButton::buttonOnColourId, polarity::theme::ink);
     button.setColour (juce::TextButton::textColourOffId, polarity::theme::ink);
     button.setColour (juce::TextButton::textColourOnId, polarity::theme::paper);
+}
+
+void PolarityAudioProcessorEditor::setDeltaOut (bool enable)
+{
+    if (auto* parameter = processorRef.getValueTreeState().getParameter ("deltaOut"))
+        parameter->setValueNotifyingHost (enable ? 1.0f : 0.0f);
 }
 
 void PolarityAudioProcessorEditor::styleCombo (juce::ComboBox& box)
@@ -356,6 +417,22 @@ void PolarityAudioProcessorEditor::updateButtons()
     redoButton.setEnabled (curveEditor.canRedo());
 
     abButton.setButtonText (processorRef.getActiveSlot() == 0 ? "A/B: A" : "A/B: B");
+
+    const auto* deltaParameter = processorRef.getValueTreeState()
+                                     .getRawParameterValue ("deltaOut");
+    const bool deltaOn = deltaParameter != nullptr && deltaParameter->load() >= 0.5f;
+    normButton.setToggleState (! deltaOn, juce::dontSendNotification);
+    deltaButton.setToggleState (deltaOn, juce::dontSendNotification);
+
+    const int metricValue = static_cast<int> (
+        processorRef.getValueTreeState().state.getProperty ("waveformMetric", 0));
+    const bool peakMetric = metricValue == 1;
+    waveformPanel.setMetric (peakMetric ? WaveformPanel::Metric::Peak
+                                        : WaveformPanel::Metric::Rms);
+
+    if (metricBox.getSelectedId() != (peakMetric ? 2 : 1))
+        metricBox.setSelectedId (peakMetric ? 2 : 1,
+                                 juce::dontSendNotification);
 
     spectrumButton.setToggleState (curveEditor.isSpectrumVisible(),
                                    juce::dontSendNotification);
@@ -407,6 +484,7 @@ void PolarityAudioProcessorEditor::paint (juce::Graphics& g)
     g.fillRoundedRectangle (groupBounds ({ &layerLeft, &layerStereo, &layerRight }), 6.0f);
     g.fillRoundedRectangle (groupBounds ({ &toolDraw, &toolNode, &toolErase }), 6.0f);
     g.fillRoundedRectangle (groupBounds ({ &spectrumButton, &polarityButton }), 6.0f);
+    g.fillRoundedRectangle (groupBounds ({ &normButton, &deltaButton }), 6.0f);
 }
 
 void PolarityAudioProcessorEditor::resized()
@@ -418,6 +496,9 @@ void PolarityAudioProcessorEditor::resized()
 
     auto headerRight = header;
     bypassToggle.setBounds (headerRight.removeFromRight (88).reduced (0, 4));
+    headerRight.removeFromRight (8);
+    deltaButton.setBounds (headerRight.removeFromRight (56).reduced (0, 4));
+    normButton.setBounds (headerRight.removeFromRight (52).reduced (0, 4));
     headerRight.removeFromRight (8);
     savePresetButton.setBounds (headerRight.removeFromRight (56).reduced (0, 4));
     headerRight.removeFromRight (8);
@@ -498,21 +579,15 @@ void PolarityAudioProcessorEditor::resized()
     area.removeFromBottom (10);
 
     const int waveformHeight = juce::jlimit (
-        140, 180, juce::roundToInt (area.getHeight() * 0.28f));
+        170, 210, juce::roundToInt (area.getHeight() * 0.30f));
     auto waveform = area.removeFromBottom (waveformHeight);
-    const int waveformRight = waveform.getRight();
     area.removeFromBottom (12);
 
     auto meterArea = area.removeFromRight (82);
     area.removeFromRight (12);
     meterPanel.setBounds (meterArea);
     curveEditor.setBounds (area);
-
-    const int curvePlotLeft = curveEditor.getX() + 4 + 24;
-    waveform.setX (juce::jmax (waveform.getX(), curvePlotLeft - 8));
-    waveform.setWidth (waveformRight - waveform.getX());
     waveformPanel.setBounds (waveform);
-    waveformPanel.setPlotLeftInset (0);
 
     auto footerControls = footer.reduced (0, 4);
     footerControls.removeFromLeft (28);
@@ -522,6 +597,9 @@ void PolarityAudioProcessorEditor::resized()
     auto footerRight = footerControls;
     edgeBox.setBounds (footerRight.removeFromRight (88).reduced (0, 1));
     edgeCaption.setBounds (footerRight.removeFromRight (40));
+    footerRight.removeFromRight (14);
+    metricBox.setBounds (footerRight.removeFromRight (84).reduced (0, 1));
+    metricCaption.setBounds (footerRight.removeFromRight (48));
     footerRight.removeFromRight (14);
     waveSpeedBox.setBounds (footerRight.removeFromRight (96).reduced (0, 1));
     waveCaption.setBounds (footerRight.removeFromRight (42));

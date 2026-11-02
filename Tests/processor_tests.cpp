@@ -346,7 +346,7 @@ AnalysisResult testAnalysis (PolarityAudioProcessor& processor)
     processor.setActiveSlot (0);
     processor.setCurves (flatCurve(), flatCurve());
     processor.prepareToPlay (kSampleRate, blockSize);
-    processor.setWaveformWindow (8192);
+    processor.setWaveformWindowMs (170.0f);
 
     juce::AudioBuffer<float> buffer (2, blockSize);
     juce::MidiBuffer midi;
@@ -402,6 +402,126 @@ AnalysisResult testAnalysis (PolarityAudioProcessor& processor)
 
     return result;
 }
+
+std::vector<CurvePoint> invertCurve()
+{
+    return { { 20.0, 0.0 },
+             { 100.0, 0.0 },
+             { 200.0, 2.0 },
+             { 2000.0, 2.0 },
+             { 4000.0, 0.0 },
+             { 20000.0, 0.0 } };
+}
+
+double measureDeltaCrossfade (PolarityAudioProcessor& processor)
+{
+    auto* delta = processor.getValueTreeState().getParameter ("deltaOut");
+    auto* mix = processor.getValueTreeState().getParameter ("mix");
+    auto* bypass = processor.getValueTreeState().getParameter ("bypass");
+
+    if (delta == nullptr || mix == nullptr || bypass == nullptr)
+        return 1.0e9;
+
+    delta->setValueNotifyingHost (0.0f);
+    mix->setValueNotifyingHost (1.0f);
+    bypass->setValueNotifyingHost (0.0f);
+    processor.setCurves (lowNullCurve(), flatCurve());
+    processor.prepareToPlay (kSampleRate, blockSize);
+
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    juce::MidiBuffer midi;
+    double previous = 0.0;
+    double maxStep = 0.0;
+    bool changed = false;
+
+    for (int position = 0; position < static_cast<int> (kSampleRate); position += blockSize)
+    {
+        fillSine (buffer, position, 1000.0);
+
+        if (! changed && position >= static_cast<int> (kSampleRate * 0.25))
+        {
+            delta->setValueNotifyingHost (1.0f);
+            changed = true;
+        }
+
+        processor.processBlock (buffer, midi);
+
+        for (int i = 0; i < blockSize; ++i)
+        {
+            const double value = buffer.getSample (0, i);
+
+            if (position + i > 0)
+                maxStep = std::max (maxStep, std::abs (value - previous));
+
+            previous = value;
+        }
+    }
+
+    delta->setValueNotifyingHost (0.0f);
+    return maxStep;
+}
+
+bool testDeltaMode (PolarityAudioProcessor& processor)
+{
+    auto* delta = processor.getValueTreeState().getParameter ("deltaOut");
+    auto* mix = processor.getValueTreeState().getParameter ("mix");
+    auto* bypass = processor.getValueTreeState().getParameter ("bypass");
+
+    if (delta == nullptr || mix == nullptr || bypass == nullptr)
+        return false;
+
+    processor.setActiveSlot (0);
+    processor.setCurves (lowNullCurve(), flatCurve());
+    mix->setValueNotifyingHost (1.0f);
+    bypass->setValueNotifyingHost (0.0f);
+    delta->setValueNotifyingHost (0.0f);
+
+    const double normalL = measureSineGainDb (processor, 400.0, 0);
+    const double normalR = measureSineGainDb (processor, 400.0, 1);
+
+    delta->setValueNotifyingHost (1.0f);
+    const double deltaL = measureSineGainDb (processor, 400.0, 0);
+    const double deltaR = measureSineGainDb (processor, 400.0, 1);
+
+    // A=2 in the band: delta output is 2x the band content (+6 dB).
+    processor.setCurves (invertCurve(), flatCurve());
+    const double invertDeltaL = measureSineGainDb (processor, 400.0, 0);
+
+    // mix=0: no action, delta is silent.
+    processor.setCurves (lowNullCurve(), flatCurve());
+    mix->setValueNotifyingHost (0.0f);
+    const double mixZeroDeltaL = measureSineGainDb (processor, 400.0, 0);
+
+    // bypass wins over delta.
+    mix->setValueNotifyingHost (1.0f);
+    bypass->setValueNotifyingHost (1.0f);
+    const double bypassDeltaL = measureSineGainDb (processor, 400.0, 0);
+
+    // Back to NORM: the null returns.
+    bypass->setValueNotifyingHost (0.0f);
+    delta->setValueNotifyingHost (0.0f);
+    const double restoredL = measureSineGainDb (processor, 400.0, 0);
+
+    const double crossfadeStep = measureDeltaCrossfade (processor);
+
+    std::printf ("delta normal L/R : %.1f / %.1f dB\n", normalL, normalR);
+    std::printf ("delta L/R        : %.1f / %.1f dB\n", deltaL, deltaR);
+    std::printf ("delta A=2 L      : %.1f dB\n", invertDeltaL);
+    std::printf ("delta mix=0 L    : %.1f dB\n", mixZeroDeltaL);
+    std::printf ("delta bypass L   : %.1f dB\n", bypassDeltaL);
+    std::printf ("delta restored L : %.1f dB\n", restoredL);
+    std::printf ("delta fade max   : %.4f\n", crossfadeStep);
+
+    return normalL < -40.0
+        && std::abs (normalR) < 0.1
+        && std::abs (deltaL) < 0.5
+        && deltaR < -60.0
+        && invertDeltaL > 5.0 && invertDeltaL < 7.0
+        && mixZeroDeltaL < -60.0
+        && std::abs (bypassDeltaL) < 0.1
+        && restoredL < -40.0
+        && crossfadeStep < 0.15;
+}
 } // namespace
 
 int main()
@@ -438,6 +558,8 @@ int main()
 
     const auto analysis = testAnalysis (processor);
     const bool analysisOk = analysis.ok;
+
+    const bool deltaOk = testDeltaMode (processor);
 
     processor.setCurvePoints (0, lowNullCurve());
     processor.setCurvePoints (1, highNullCurve());
@@ -483,6 +605,7 @@ int main()
                  && presetOk
                  && metersOk
                  && analysisOk
+                 && deltaOk
                  && editorOk;
 
     std::printf ("PROCESSOR TEST   : %s\n", ok ? "PASS" : "FAIL");

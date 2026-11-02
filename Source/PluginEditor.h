@@ -10,7 +10,8 @@
 
 class PolarityAudioProcessor;
 
-class PolarityAudioProcessorEditor final : public juce::AudioProcessorEditor
+class PolarityAudioProcessorEditor final : public juce::AudioProcessorEditor,
+                                             private juce::Timer
 {
 public:
     explicit PolarityAudioProcessorEditor (PolarityAudioProcessor&);
@@ -21,7 +22,9 @@ public:
 
 private:
     void updateButtons();
+    void timerCallback() override;
     void refreshPresetList();
+    void setDeltaOut (bool enable);
     static void styleButton (juce::TextButton&);
     static void styleCombo (juce::ComboBox&);
 
@@ -48,6 +51,8 @@ private:
     bool suppressPresetLoad = false;
 
     juce::TextButton abButton { "A/B: A" };
+    juce::TextButton normButton { "NORM" };
+    juce::TextButton deltaButton { "DELTA" };
     juce::TextButton layerLeft { "L" };
     juce::TextButton layerStereo { "ST" };
     juce::TextButton layerRight { "R" };
@@ -68,6 +73,8 @@ private:
     juce::AudioProcessorValueTreeState::SliderAttachment mixAttachment;
     juce::Label waveCaption;
     juce::ComboBox waveSpeedBox;
+    juce::Label metricCaption;
+    juce::ComboBox metricBox;
 
     juce::Label statusLabel;
 
