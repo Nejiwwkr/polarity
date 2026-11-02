@@ -33,11 +33,7 @@ void MeterPanel::paint (juce::Graphics& g)
     g.fillRoundedRectangle (area, 8.0f);
 
     auto inner = area.reduced (6.0f);
-
-    auto title = inner.removeFromTop (14.0f);
-    g.setColour (polarity::theme::secondary);
-    g.setFont (juce::Font (juce::FontOptions (polarity::type::annotation)));
-    g.drawText ("M / S", title, juce::Justification::centred, false);
+    inner.removeFromTop (4.0f);
 
     auto corrArea = inner.removeFromBottom (30.0f);
 

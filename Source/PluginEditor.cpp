@@ -622,17 +622,17 @@ void PolarityAudioProcessorEditor::resized()
     row.removeFromLeft (2);
     toolErase.setBounds (takeLeft (64));
 
-    row.removeFromLeft (18);
-    undoButton.setBounds (takeLeft (54));
-    row.removeFromLeft (4);
-    redoButton.setBounds (takeLeft (54));
-
     // Anchor POLARITY's right edge to the drawn spectrum plot's right edge.
     auto spectrumCluster = row.withRight (curveEditorRight
                                           - CurveEditor::plotRightInset);
     polarityButton.setBounds (spectrumCluster.removeFromRight (84));
     spectrumCluster.removeFromRight (2);
     spectrumButton.setBounds (spectrumCluster.removeFromRight (90));
+
+    auto actionRow = row.withTrimmedRight (3);
+    redoButton.setBounds (actionRow.removeFromRight (54));
+    actionRow.removeFromRight (4);
+    undoButton.setBounds (actionRow.removeFromRight (54));
 
     area.removeFromTop (8);
 
