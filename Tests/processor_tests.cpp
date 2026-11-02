@@ -522,6 +522,91 @@ bool testDeltaMode (PolarityAudioProcessor& processor)
         && restoredL < -40.0
         && crossfadeStep < 0.15;
 }
+
+struct QualityResult
+{
+    int latency = 0;
+    double nullDb = 0.0;
+    double passDb = 0.0;
+    double deltaFlatDb = 0.0;
+    double dryError = 0.0;
+};
+
+bool testQuality (PolarityAudioProcessor& processor)
+{
+    auto* mix = processor.getValueTreeState().getParameter ("mix");
+    auto* bypass = processor.getValueTreeState().getParameter ("bypass");
+    auto* delta = processor.getValueTreeState().getParameter ("deltaOut");
+
+    if (mix == nullptr || bypass == nullptr || delta == nullptr)
+        return false;
+
+    processor.setActiveSlot (0);
+    mix->setValueNotifyingHost (1.0f);
+    bypass->setValueNotifyingHost (0.0f);
+    delta->setValueNotifyingHost (0.0f);
+
+    const auto run = [&] (int quality)
+    {
+        processor.setCurves (lowNullCurve(), flatCurve());
+        processor.setQuality (quality);
+        processor.prepareToPlay (kSampleRate, blockSize);
+
+        QualityResult result;
+        result.latency = processor.getLatencySamples();
+        result.nullDb = measureSineGainDb (processor, 400.0, 0);
+        result.passDb = measureSineGainDb (processor, 400.0, 1);
+
+        // Flat R curve in DELTA: dry - wet must be silent, which proves the
+        // variable-length kernel is aligned with the dry delay.
+        delta->setValueNotifyingHost (1.0f);
+        result.deltaFlatDb = measureSineGainDb (processor, 400.0, 1);
+        delta->setValueNotifyingHost (0.0f);
+
+        bypass->setValueNotifyingHost (1.0f);
+        result.dryError = measureDelayedDryError (processor, 1.0f, true);
+        bypass->setValueNotifyingHost (0.0f);
+        return result;
+    };
+
+    const auto low = run (0);
+    const auto normal = run (1);
+    const auto high = run (2);
+
+    const int storedQuality = static_cast<int> (
+        processor.getValueTreeState().state.getProperty ("quality", -1));
+
+    processor.setQuality (1);
+    processor.prepareToPlay (kSampleRate, blockSize);
+    const int restoredLatency = processor.getLatencySamples();
+
+    std::printf ("quality 2048     : lat %d  null %.1f dB  delta-flat %.1f dB  dry %.1e\n",
+                 low.latency, low.nullDb, low.deltaFlatDb, low.dryError);
+    std::printf ("quality 4096     : lat %d  null %.1f dB  delta-flat %.1f dB  dry %.1e\n",
+                 normal.latency, normal.nullDb, normal.deltaFlatDb, normal.dryError);
+    std::printf ("quality 8192     : lat %d  null %.1f dB  delta-flat %.1f dB  dry %.1e\n",
+                 high.latency, high.nullDb, high.deltaFlatDb, high.dryError);
+    std::printf ("quality restore  : %d (stored %d)\n",
+                 restoredLatency, storedQuality);
+
+    return low.latency == 1024
+        && normal.latency == 2048
+        && high.latency == 4096
+        && low.nullDb < -20.0
+        && normal.nullDb < -40.0
+        && high.nullDb < -40.0
+        && std::abs (low.passDb) < 0.1
+        && std::abs (normal.passDb) < 0.1
+        && std::abs (high.passDb) < 0.1
+        && low.deltaFlatDb < -60.0
+        && normal.deltaFlatDb < -60.0
+        && high.deltaFlatDb < -60.0
+        && low.dryError < 1.0e-6
+        && normal.dryError < 1.0e-6
+        && high.dryError < 1.0e-6
+        && storedQuality == 2
+        && restoredLatency == 2048;
+}
 } // namespace
 
 int main()
@@ -560,6 +645,7 @@ int main()
     const bool analysisOk = analysis.ok;
 
     const bool deltaOk = testDeltaMode (processor);
+    const bool qualityOk = testQuality (processor);
 
     processor.setCurvePoints (0, lowNullCurve());
     processor.setCurvePoints (1, highNullCurve());
@@ -591,6 +677,7 @@ int main()
                  analysis.inNull, analysis.outNull,
                  analysis.maxWave);
     std::printf ("analysis test    : %s\n", analysisOk ? "PASS" : "FAIL");
+    std::printf ("quality test     : %s\n", qualityOk ? "PASS" : "FAIL");
     std::printf ("editor smoke     : %s\n", editorOk ? "PASS" : "FAIL");
 
     const bool ok = latency == 2048
@@ -606,6 +693,7 @@ int main()
                  && metersOk
                  && analysisOk
                  && deltaOk
+                 && qualityOk
                  && editorOk;
 
     std::printf ("PROCESSOR TEST   : %s\n", ok ? "PASS" : "FAIL");

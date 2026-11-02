@@ -44,6 +44,22 @@ public:
     juce::AudioProcessorValueTreeState& getValueTreeState() noexcept { return apvts; }
     int getEngineLatencySamples() const noexcept { return engine.getLatencySamples(); }
 
+    /** FIR quality: 0 = 2048 taps, 1 = 4096 taps, 2 = 8192 taps. */
+    static constexpr int getQualityChoiceCount() noexcept { return 3; }
+
+    static constexpr int getQualityTaps (int choice) noexcept
+    {
+        return choice <= 0 ? 2048 : (choice == 1 ? 4096 : 8192);
+    }
+
+    int getQuality() const noexcept
+    {
+        return qualityChoice.load (std::memory_order_relaxed);
+    }
+
+    /** Changing quality changes the reported latency; the host re-syncs PDC. */
+    void setQuality (int choice);
+
     /** channel: 0 = left, 1 = right. */
     std::vector<polarity::dsp::CurvePoint> getCurvePoints (int channel) const;
     void setCurvePoints (int channel, std::vector<polarity::dsp::CurvePoint> points);
@@ -199,6 +215,8 @@ private:
     void writeCurvesToState();
     void loadCurvesFromState();
     void rebuildKernels();
+    int qualityFromState() const;
+    void applyQualityToEngine();
     void updateAnalysis (int wetLatency, int blockSamples);
     void resetAnalysis();
 
@@ -252,7 +270,11 @@ private:
     std::array<float, 2> deltaAmounts { 0.0f, 0.0f };
     float deltaSmoothingCoeff = 1.0f;
 
-    static constexpr int numTaps = 4096;
+    /** Everything is prepared for the largest kernel so quality switches are
+        allocation-free and only the active kernel length changes. */
+    static constexpr int maxTaps = 8192;
+    std::atomic<int> qualityChoice { 1 };
+    std::atomic<int> activeLatency { 2048 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PolarityAudioProcessor)
 };

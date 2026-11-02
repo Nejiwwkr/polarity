@@ -22,7 +22,7 @@ class InversionEngine
 public:
     static constexpr int numKernelBuffers = 4;
 
-    void prepare (double sampleRate, int numTaps, int numChannels);
+    void prepare (double sampleRate, int maxTaps, int numChannels);
     void reset();
 
     /** Non-real-time: install the initial pair before audio starts. */
@@ -33,8 +33,13 @@ public:
 
     void process (float* const* channels, int numChannels, int numSamples);
 
-    int getNumTaps() const noexcept { return numTaps; }
-    int getLatencySamples() const noexcept { return numTaps / 2; }
+    /** Active kernel length, which may be shorter than the prepared maximum. */
+    int getNumTaps() const noexcept
+    {
+        return activeTaps.load (std::memory_order_relaxed);
+    }
+
+    int getLatencySamples() const noexcept { return getNumTaps() / 2; }
 
 private:
     struct ChannelState
@@ -47,17 +52,23 @@ private:
     {
         std::vector<double> left;   // time-reversed taps
         std::vector<double> right;
+        int taps = 0;
     };
 
     static double dotProduct (const std::vector<double>& history,
                               int writePos,
+                              int ringSize,
+                              int taps,
                               const double* kernel) noexcept;
 
     void processChannel (ChannelState& state,
                          float* data,
                          int numSamples,
+                         int ringSize,
                          const double* currentKernel,
+                         int currentTaps,
                          const double* previousKernel,
+                         int previousTaps,
                          int fadeStart,
                          bool blockFading) noexcept;
 
@@ -71,9 +82,10 @@ private:
     std::atomic<int> currentIndex { 0 };
     std::atomic<int> previousIndex { -1 };
     std::atomic<int> pendingIndex { -1 };
+    std::atomic<int> activeTaps { 0 };
     std::atomic_flag stateFlag = ATOMIC_FLAG_INIT;
 
-    int numTaps = 0;
+    int maxTaps = 0;
     int fadeLength = 0;
     int fadePosition = 0;
     bool fading = false;

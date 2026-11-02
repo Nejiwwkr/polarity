@@ -355,6 +355,22 @@ PolarityAudioProcessorEditor::PolarityAudioProcessorEditor (PolarityAudioProcess
     };
     addAndMakeVisible (metricBox);
 
+    qualityCaption.setText ("QUALITY", juce::dontSendNotification);
+    qualityCaption.setFont (juce::Font (juce::FontOptions (polarity::type::control)));
+    qualityCaption.setJustificationType (juce::Justification::centredLeft);
+    qualityCaption.setColour (juce::Label::textColourId, polarity::theme::secondary);
+    addAndMakeVisible (qualityCaption);
+
+    styleCombo (qualityBox);
+    refreshQualityItems();
+    qualityBox.onChange = [this]
+    {
+        const int index = juce::jlimit (0, PolarityAudioProcessor::getQualityChoiceCount() - 1,
+                                        qualityBox.getSelectedItemIndex());
+        processorRef.setQuality (index);
+    };
+    addAndMakeVisible (qualityBox);
+
     statusLabel.setText (
         "heatmap: 0 blue / NULL light / INV red",
         juce::dontSendNotification);
@@ -411,6 +427,28 @@ void PolarityAudioProcessorEditor::refreshPresetList()
     suppressPresetLoad = false;
 }
 
+void PolarityAudioProcessorEditor::refreshQualityItems()
+{
+    const double rate = processorRef.getSampleRate() > 0.0
+                            ? processorRef.getSampleRate()
+                            : 48000.0;
+    qualitySampleRate = rate;
+
+    qualityBox.clear (juce::dontSendNotification);
+
+    for (int i = 0; i < PolarityAudioProcessor::getQualityChoiceCount(); ++i)
+    {
+        const int taps = PolarityAudioProcessor::getQualityTaps (i);
+        const double latencyMs = 1000.0 * (taps / 2) / rate;
+        qualityBox.addItem (juce::String (taps) + " / "
+                                + juce::String (latencyMs, 1) + " ms",
+                            i + 1);
+    }
+
+    qualityBox.setSelectedId (processorRef.getQuality() + 1,
+                              juce::dontSendNotification);
+}
+
 void PolarityAudioProcessorEditor::updateButtons()
 {
     undoButton.setEnabled (curveEditor.canUndo());
@@ -433,6 +471,14 @@ void PolarityAudioProcessorEditor::updateButtons()
     if (metricBox.getSelectedId() != (peakMetric ? 2 : 1))
         metricBox.setSelectedId (peakMetric ? 2 : 1,
                                  juce::dontSendNotification);
+
+    const double rate = processorRef.getSampleRate();
+    if (rate > 0.0 && std::abs (rate - qualitySampleRate) > 1.0)
+        refreshQualityItems();
+
+    const int qualityId = processorRef.getQuality() + 1;
+    if (qualityBox.getSelectedId() != qualityId)
+        qualityBox.setSelectedId (qualityId, juce::dontSendNotification);
 
     spectrumButton.setToggleState (curveEditor.isSpectrumVisible(),
                                    juce::dontSendNotification);
@@ -590,17 +636,24 @@ void PolarityAudioProcessorEditor::resized()
     waveformPanel.setBounds (waveform);
 
     auto footerControls = footer.reduced (0, 4);
-    footerControls.removeFromLeft (28);
-    mixCaption.setBounds (footerControls.removeFromLeft (36));
-    mixSlider.setBounds (footerControls.removeFromLeft (210).reduced (0, 1));
 
     auto footerRight = footerControls;
-    edgeBox.setBounds (footerRight.removeFromRight (88).reduced (0, 1));
-    edgeCaption.setBounds (footerRight.removeFromRight (40));
+    waveSpeedBox.setBounds (footerRight.removeFromRight (96).reduced (0, 1));
+    waveCaption.setBounds (footerRight.removeFromRight (42));
     footerRight.removeFromRight (14);
     metricBox.setBounds (footerRight.removeFromRight (84).reduced (0, 1));
     metricCaption.setBounds (footerRight.removeFromRight (48));
     footerRight.removeFromRight (14);
-    waveSpeedBox.setBounds (footerRight.removeFromRight (96).reduced (0, 1));
-    waveCaption.setBounds (footerRight.removeFromRight (42));
+    edgeBox.setBounds (footerRight.removeFromRight (88).reduced (0, 1));
+    edgeCaption.setBounds (footerRight.removeFromRight (40));
+    footerRight.removeFromRight (16);
+    qualityBox.setBounds (footerRight.removeFromRight (112).reduced (0, 1));
+    qualityCaption.setBounds (footerRight.removeFromRight (56));
+
+    auto footerLeft = footerControls;
+    footerLeft.removeFromLeft (28);
+    mixCaption.setBounds (footerLeft.removeFromLeft (36));
+    const int sliderRight = juce::jmax (footerLeft.getX() + 100,
+                                        footerRight.getRight() - 14);
+    mixSlider.setBounds (footerLeft.withRight (sliderRight).reduced (0, 1));
 }

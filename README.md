@@ -29,8 +29,9 @@ Y_c(f) = (1 − A_c(f)) · X_c(f)        A_c(f) ∈ [0, 2]
 - [x] 波形对比：输入/输出填充、RMS dB 包络、冻结、6 档时间窗口
 - [x] 浅色纸感主题：暖纸底 + 墨色 + 朱红强调；自定义扁平 LookAndFeel
 - [x] 输出 NORM / DELTA 双模式；波形 RMS / PEAK 指标可选
-- [x] 离线测试：DSP 自检 + Processor 集成测试 + A/B/预设/计量/分析 + 编辑器 smoke 全部 PASS
-- [ ] M4：质量档（2048/4096/8192）、采样率矩阵、pluginval、CPU 优化、打包
+- [x] 质量档：2048 / 4096 / 8192 taps（切换延迟与频率分辨率，不重新分配内存）
+- [x] 离线测试：DSP 自检 + Processor 集成测试 + A/B/预设/计量/分析/质量档 + 编辑器 smoke 全部 PASS
+- [ ] M4 剩余：采样率矩阵、pluginval、CPU 优化、打包
 
 当前插件默认曲线是**平直（A=0，透明）**。用 DRAW 在画布上画出反相量；ST 层会同时写入 L 和 R。
 
@@ -54,6 +55,7 @@ cmake --build Build --config Release --target Polarity_VST3 Polarity_Standalone 
 - 默认曲线平直，插件透明。
 - **DRAW**：按住拖动，在光标频率直接写入反相量。
 - **EDGE**（底部）：Off / 1 bin / 2 bins / 4 bins（默认 2 bins）。在 FIR 设计时对 H(f) 过渡做频域平滑，缓解陡峭曲线边界的振铃/预回声；A=0/A=2 的平坦区域仍然精确。
+- **QUALITY**（底栏 MIX 右侧）：2048 / 4096 / 8192 taps，选项文本显示当前采样率下的实际延迟（48kHz 时约 21.3 / 42.7 / 85.3 ms）。taps 越大，频率分辨率越高、深 null 越容易做出来，但 PDC 延迟越大；切换时插件会上报新的延迟，宿主可能重新同步播放位置。默认 4096。
 - **NODE**：拖动控制点；双击空白加点；右键点击控制点删除。
 - **ERASE**：在局部把曲线擦回 0。
 - **L / ST / R**：L 只编辑左通道，R 只编辑右通道，ST 同时写入两侧。
@@ -89,7 +91,7 @@ cmake --build Build --config Release --target Polarity_VST3 Polarity_Standalone 
 
 - 模式按钮放在浅沙色底板里：未选中透明、选中墨底纸字；`SAVE` 为朱红底纸字；Undo/Redo 为幽灵文字。
 - 字体层级统一为四级：品牌 26 / 主要 13（副标题、鼠标读数）/ 控件 12（按钮、下拉、字段名、预设、滑杆数值）/ 注释 11（频率/反相量/dBFS 刻度、M/S、波形标题/提示、警告）；最小字号不低于 11。
-- 布局：品牌 / 预设+保存+NORM|DELTA+旁通；副标题 + SLOPE/SMOOTH/TIME；A/B + L/ST/R + 工具在左，Undo/Redo + SPECTRUM/POLARITY 在右；主区曲线 + 瘦身 M/S；下方 WAVEFORM；底栏 MIX 左，METRIC/WAVE/EDGE 右。
+- 布局：品牌 / 预设+保存+NORM|DELTA+旁通；副标题 + SLOPE/SMOOTH/TIME；A/B + L/ST/R + 工具在左，Undo/Redo + SPECTRUM/POLARITY 在右；主区曲线 + 瘦身 M/S；下方 WAVEFORM；底栏 MIX 左，QUALITY / EDGE / METRIC / WAVE 右。
 - **统一左基准线**：标题、副标题、A/B、曲线 20Hz Y 轴、波形面板左缘、MIX 都落在同一条 40px 竖线上；左侧 40px 作为品牌斜杠 + INV/1.5/NULL/0.5 刻度槽。
 - **统一右基准线**：WAVEFORM 面板右缘与 M/S 面板右缘对齐，外框和内绘图区都参与对齐。
 - L = 钴蓝，R = 朱红，ST = 紫；频谱输入灰蓝、输出墨绿；热力图浅蓝 → 钴蓝 → 沙色 → 橙 → 朱红。
@@ -137,6 +139,10 @@ Processor:
   delta L/R        : -0.0 / -300.0 dB
   delta A=2 L      : 6.0 dB
   delta test       : PASS
+  quality 2048     : lat 1024  null -85.1 dB  dry 0.0e+00
+  quality 4096     : lat 2048  null -96.2 dB  dry 0.0e+00
+  quality 8192     : lat 4096  null -149.7 dB  dry 0.0e+00
+  quality test     : PASS        (三档延迟、null、旁通延迟对齐、状态保存)
   editor smoke     : PASS        (构造浅色主题 UI)
   PROCESSOR TEST   : PASS
 ```
@@ -161,7 +167,7 @@ python Tools/reference_render.py --self-test
 
 - **零相位 FIR**：在 N/2+1 个频点采样 `H=1−A`，补共轭对称谱，IFFT 后循环右移 N/2。延迟 `N/2` 样本，频率分辨率 `fs/N`。
 - **不加窗**：加窗会破坏 `A=0`/`A=2` 的精确性。频域采样的 Dirichlet 插值纹波是固有代价，用 taps 和曲线平滑度管理。
-- **默认 4096 taps**：48kHz 下 42.7ms 延迟、11.7Hz 分辨率；正式版提供 2048/4096/8192 质量档。
+- **质量档 2048 / 4096 / 8192 taps**（默认 4096）：48kHz 下延迟 21.3 / 42.7 / 85.3 ms，分辨率 23.4 / 11.7 / 5.9 Hz。引擎始终按 8192 分配环形缓冲与核槽，切换只改活动核长度和 `setLatencySamples`，音频线程无分配。
 - **曲线模型**：控制点 + PCHIP（log 频率），20Hz/20kHz 端点固定为 0。
 - **状态规划**：曲线整体存插件状态，仅 bypass / mix / L、R 总反相量做可自动化宏参数。
 

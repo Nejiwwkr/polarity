@@ -102,7 +102,10 @@ void PolarityAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
 {
     currentSampleRate.store (sampleRate);
 
-    engine.prepare (sampleRate, numTaps, 2);
+    qualityChoice.store (qualityFromState());
+    const int taps = getQualityTaps (qualityChoice.load());
+
+    engine.prepare (sampleRate, maxTaps, 2);
 
     polarity::dsp::CurveModel left;
     polarity::dsp::CurveModel right;
@@ -117,12 +120,12 @@ void PolarityAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     const int edgeSmoothing = curveSmoothingBins.load (std::memory_order_relaxed);
 
     engine.setKernelsImmediate (
-        polarity::dsp::designKernel (left, sampleRate, numTaps, edgeSmoothing),
-        polarity::dsp::designKernel (right, sampleRate, numTaps, edgeSmoothing));
+        polarity::dsp::designKernel (left, sampleRate, taps, edgeSmoothing),
+        polarity::dsp::designKernel (right, sampleRate, taps, edgeSmoothing));
 
-    setLatencySamples (engine.getLatencySamples());
+    activeLatency.store (taps / 2, std::memory_order_relaxed);
+    setLatencySamples (taps / 2);
 
-    const int latency = engine.getLatencySamples();
     analysisWork.assign (static_cast<std::size_t> (fftSize * 2), 0.0f);
     hannWindow.resize (static_cast<std::size_t> (fftSize));
 
@@ -138,7 +141,7 @@ void PolarityAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     waveformUpdateCounter = 0;
 
     inputAnalysisRing.assign (
-        static_cast<std::size_t> (maxWaveformSamples + latency), 0.0f);
+        static_cast<std::size_t> (maxWaveformSamples + maxTaps / 2), 0.0f);
     outputAnalysisRing.assign (
         static_cast<std::size_t> (maxWaveformSamples), 0.0f);
     inputAnalysisWrite = 0;
@@ -149,7 +152,7 @@ void PolarityAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     dryCopy.clear();
 
     dryDelay.assign (2, std::vector<float> (
-                            static_cast<std::size_t> (engine.getLatencySamples()), 0.0f));
+                            static_cast<std::size_t> (maxTaps / 2), 0.0f));
     dryDelayIndex.assign (2, 0);
 
     deltaSmoothingCoeff = static_cast<float> (
@@ -206,19 +209,32 @@ void PolarityAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
                                   && deltaOutParam->load() >= 0.5f
                               ? 1.0f : 0.0f;
 
+    const int latency = juce::jlimit (
+        0, static_cast<int> (dryDelay.empty() ? 0 : dryDelay[0].size()),
+        activeLatency.load (std::memory_order_relaxed));
+
     for (int channel = 0; channel < processedChannels; ++channel)
     {
         auto* output = buffer.getWritePointer (channel);
         auto& delay = dryDelay[static_cast<std::size_t> (channel)];
-        int& index = dryDelayIndex[static_cast<std::size_t> (channel)];
+        int& storedIndex = dryDelayIndex[static_cast<std::size_t> (channel)];
         const int delaySize = static_cast<int> (delay.size());
         float& deltaAmount = deltaAmounts[static_cast<std::size_t> (channel)];
 
+        if (delaySize <= 0)
+            continue;
+
+        int writeIndex = storedIndex;
+        int readIndex = (storedIndex + delaySize - latency) % delaySize;
+
         for (int sample = 0; sample < numSamples; ++sample)
         {
-            const float dry = delay[static_cast<std::size_t> (index)];
-            delay[static_cast<std::size_t> (index)] = dryCopy.getSample (channel, sample);
-            index = (index + 1 == delaySize) ? 0 : index + 1;
+            const float dry = delay[static_cast<std::size_t> (readIndex)];
+            delay[static_cast<std::size_t> (writeIndex)]
+                = dryCopy.getSample (channel, sample);
+
+            writeIndex = (writeIndex + 1 == delaySize) ? 0 : writeIndex + 1;
+            readIndex = (readIndex + 1 == delaySize) ? 0 : readIndex + 1;
 
             const float wet = output[sample];
             const float normal = wet * mix + dry * (1.0f - mix);
@@ -229,6 +245,8 @@ void PolarityAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             output[sample] = bypassed ? dry
                                       : normal + deltaAmount * (delta - normal);
         }
+
+        storedIndex = writeIndex;
     }
 
     // --- post-output M/S metering ---------------------------------------
@@ -488,10 +506,43 @@ void PolarityAudioProcessor::rebuildKernels()
         return;
 
     const int edgeSmoothing = curveSmoothingBins.load (std::memory_order_relaxed);
+    const int taps = getQualityTaps (qualityChoice.load (std::memory_order_relaxed));
 
     engine.setKernels (
-        polarity::dsp::designKernel (left, sampleRate, numTaps, edgeSmoothing),
-        polarity::dsp::designKernel (right, sampleRate, numTaps, edgeSmoothing));
+        polarity::dsp::designKernel (left, sampleRate, taps, edgeSmoothing),
+        polarity::dsp::designKernel (right, sampleRate, taps, edgeSmoothing));
+}
+
+int PolarityAudioProcessor::qualityFromState() const
+{
+    return juce::jlimit (0, getQualityChoiceCount() - 1,
+                         static_cast<int> (apvts.state.getProperty ("quality", 1)));
+}
+
+void PolarityAudioProcessor::setQuality (int choice)
+{
+    choice = juce::jlimit (0, getQualityChoiceCount() - 1, choice);
+
+    apvts.state.setProperty ("quality", choice, nullptr);
+
+    if (qualityChoice.load (std::memory_order_relaxed) == choice)
+        return;
+
+    qualityChoice.store (choice, std::memory_order_relaxed);
+
+    if (currentSampleRate.load (std::memory_order_relaxed) <= 0.0)
+        return;
+
+    applyQualityToEngine();
+}
+
+void PolarityAudioProcessor::applyQualityToEngine()
+{
+    const int taps = getQualityTaps (qualityChoice.load (std::memory_order_relaxed));
+
+    activeLatency.store (taps / 2, std::memory_order_relaxed);
+    setLatencySamples (taps / 2);
+    rebuildKernels();
 }
 
 void PolarityAudioProcessor::resetAnalysis()
@@ -731,6 +782,16 @@ void PolarityAudioProcessor::setStateInformation (const void* data, int sizeInBy
     {
         apvts.replaceState (juce::ValueTree::fromXml (*xml));
         loadCurvesFromState();
+        qualityChoice.store (qualityFromState(), std::memory_order_relaxed);
+
+        if (currentSampleRate.load (std::memory_order_relaxed) > 0.0)
+        {
+            const int taps = getQualityTaps (
+                qualityChoice.load (std::memory_order_relaxed));
+            activeLatency.store (taps / 2, std::memory_order_relaxed);
+            setLatencySamples (taps / 2);
+        }
+
         rebuildKernels();
         curveBroadcaster.sendChangeMessage();
     }

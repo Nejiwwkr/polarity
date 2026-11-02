@@ -24,6 +24,7 @@ private:
     void updateButtons();
     void timerCallback() override;
     void refreshPresetList();
+    void refreshQualityItems();
     void setDeltaOut (bool enable);
     static void styleButton (juce::TextButton&);
     static void styleCombo (juce::ComboBox&);
@@ -75,6 +76,9 @@ private:
     juce::ComboBox waveSpeedBox;
     juce::Label metricCaption;
     juce::ComboBox metricBox;
+    juce::Label qualityCaption;
+    juce::ComboBox qualityBox;
+    double qualitySampleRate = 0.0;
 
     juce::Label statusLabel;
 

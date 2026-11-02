@@ -9,40 +9,46 @@ namespace polarity::dsp
 
 namespace
 {
-void validateKernelSize (const FirKernel& kernel, int numTaps)
+void validateKernelSize (const FirKernel& kernel, int maxTaps)
 {
-    if (static_cast<int> (kernel.taps.size()) != numTaps)
-        throw std::invalid_argument ("kernel length does not match prepared engine");
+    const int taps = static_cast<int> (kernel.taps.size());
+
+    if (taps < 8 || taps > maxTaps || (taps & 1) != 0 || (taps & (taps - 1)) != 0)
+        throw std::invalid_argument ("kernel length must be an even power of two "
+                                     "that fits the prepared maximum");
 }
 } // namespace
 
-void InversionEngine::prepare (double newSampleRate, int taps, int numChannels)
+void InversionEngine::prepare (double newSampleRate, int maxTapsToUse, int numChannels)
 {
     if (newSampleRate <= 0.0)
         throw std::invalid_argument ("sample rate must be positive");
 
-    if (taps < 8 || (taps & 1) != 0 || (taps & (taps - 1)) != 0)
-        throw std::invalid_argument ("numTaps must be an even power of two >= 8");
+    if (maxTapsToUse < 8 || (maxTapsToUse & 1) != 0
+        || (maxTapsToUse & (maxTapsToUse - 1)) != 0)
+        throw std::invalid_argument ("maxTaps must be an even power of two >= 8");
 
     sampleRate = newSampleRate;
-    numTaps = taps;
+    maxTaps = maxTapsToUse;
     fadeLength = std::max (1, static_cast<int> (std::lround (0.06 * sampleRate)));
     fadePosition = 0;
     fading = false;
+    activeTaps.store (0, std::memory_order_relaxed);
 
     channelStates.assign (static_cast<std::size_t> (std::max (1, numChannels)),
                           ChannelState {});
 
     for (auto& state : channelStates)
     {
-        state.history.assign (static_cast<std::size_t> (numTaps), 0.0);
+        state.history.assign (static_cast<std::size_t> (maxTaps), 0.0);
         state.writePos = 0;
     }
 
     for (auto& pair : kernels)
     {
-        pair.left.assign (static_cast<std::size_t> (numTaps), 0.0);
-        pair.right.assign (static_cast<std::size_t> (numTaps), 0.0);
+        pair.left.assign (static_cast<std::size_t> (maxTaps), 0.0);
+        pair.right.assign (static_cast<std::size_t> (maxTaps), 0.0);
+        pair.taps = 0;
     }
 
     currentIndex.store (0, std::memory_order_relaxed);
@@ -61,20 +67,25 @@ void InversionEngine::reset()
 
 void InversionEngine::setKernelsImmediate (const FirKernel& left, const FirKernel& right)
 {
-    validateKernelSize (left, numTaps);
-    validateKernelSize (right, numTaps);
+    validateKernelSize (left, maxTaps);
+    validateKernelSize (right, maxTaps);
+
+    const int taps = static_cast<int> (left.taps.size());
 
     lockState();
 
     auto& pair = kernels[0];
 
-    for (int i = 0; i < numTaps; ++i)
+    for (int i = 0; i < taps; ++i)
     {
         pair.left[static_cast<std::size_t> (i)]
-            = left.taps[static_cast<std::size_t> (numTaps - 1 - i)];
+            = left.taps[static_cast<std::size_t> (taps - 1 - i)];
         pair.right[static_cast<std::size_t> (i)]
-            = right.taps[static_cast<std::size_t> (numTaps - 1 - i)];
+            = right.taps[static_cast<std::size_t> (taps - 1 - i)];
     }
+
+    pair.taps = taps;
+    activeTaps.store (taps, std::memory_order_relaxed);
 
     currentIndex.store (0, std::memory_order_relaxed);
     previousIndex.store (-1, std::memory_order_relaxed);
@@ -93,8 +104,10 @@ void InversionEngine::setKernelsImmediate (const FirKernel& left, const FirKerne
 
 void InversionEngine::setKernels (const FirKernel& left, const FirKernel& right)
 {
-    validateKernelSize (left, numTaps);
-    validateKernelSize (right, numTaps);
+    validateKernelSize (left, maxTaps);
+    validateKernelSize (right, maxTaps);
+
+    const int taps = static_cast<int> (left.taps.size());
 
     int slot = -1;
 
@@ -122,13 +135,15 @@ void InversionEngine::setKernels (const FirKernel& left, const FirKernel& right)
 
     auto& pair = kernels[static_cast<std::size_t> (slot)];
 
-    for (int i = 0; i < numTaps; ++i)
+    for (int i = 0; i < taps; ++i)
     {
         pair.left[static_cast<std::size_t> (i)]
-            = left.taps[static_cast<std::size_t> (numTaps - 1 - i)];
+            = left.taps[static_cast<std::size_t> (taps - 1 - i)];
         pair.right[static_cast<std::size_t> (i)]
-            = right.taps[static_cast<std::size_t> (numTaps - 1 - i)];
+            = right.taps[static_cast<std::size_t> (taps - 1 - i)];
     }
+
+    pair.taps = taps;
 
     lockState();
     pendingIndex.store (slot, std::memory_order_release);
@@ -137,7 +152,7 @@ void InversionEngine::setKernels (const FirKernel& left, const FirKernel& right)
 
 void InversionEngine::process (float* const* channels, int numChannels, int numSamples)
 {
-    if (numTaps == 0 || numSamples == 0)
+    if (maxTaps == 0 || numSamples == 0)
         return;
 
     consumePending();
@@ -153,6 +168,9 @@ void InversionEngine::process (float* const* channels, int numChannels, int numS
 
     const auto& currentPair = kernels[static_cast<std::size_t> (current)];
     const auto& previousPair = kernels[static_cast<std::size_t> (std::max (previous, 0))];
+
+    if (currentPair.taps == 0)
+        return;
 
     const int fadeStart = fadePosition;
 
@@ -171,8 +189,11 @@ void InversionEngine::process (float* const* channels, int numChannels, int numS
         processChannel (channelStates[static_cast<std::size_t> (channel)],
                         channels[channel],
                         numSamples,
+                        maxTaps,
                         currentKernel,
+                        currentPair.taps,
                         previousKernel,
+                        blockFading ? previousPair.taps : 0,
                         fadeStart,
                         blockFading);
     }
@@ -195,20 +216,22 @@ void InversionEngine::process (float* const* channels, int numChannels, int numS
 
 double InversionEngine::dotProduct (const std::vector<double>& history,
                                    int writePos,
+                                   int ringSize,
+                                   int taps,
                                    const double* kernel) noexcept
 {
-    const int size = static_cast<int> (history.size());
-    const int firstStart = writePos + 1;
-    const int firstLength = size - firstStart;
-    const int secondLength = writePos + 1;
+    // Kernel[i] is tap[taps - 1 - i], so multiplying forwards from the oldest
+    // sample used by this kernel realises the causal convolution.
+    const int start = (writePos + 1 + ringSize - taps) % ringSize;
+    const int firstLength = std::min (taps, ringSize - start);
 
     double sum = 0.0;
 
     for (int k = 0; k < firstLength; ++k)
-        sum += kernel[k] * history[static_cast<std::size_t> (firstStart + k)];
+        sum += kernel[k] * history[static_cast<std::size_t> (start + k)];
 
-    for (int k = 0; k < secondLength; ++k)
-        sum += kernel[firstLength + k] * history[static_cast<std::size_t> (k)];
+    for (int k = firstLength; k < taps; ++k)
+        sum += kernel[k] * history[static_cast<std::size_t> (k - firstLength)];
 
     return sum;
 }
@@ -216,12 +239,14 @@ double InversionEngine::dotProduct (const std::vector<double>& history,
 void InversionEngine::processChannel (ChannelState& state,
                                      float* data,
                                      int numSamples,
+                                     int ringSize,
                                      const double* currentKernel,
+                                     int currentTaps,
                                      const double* previousKernel,
+                                     int previousTaps,
                                      int fadeStart,
                                      bool blockFading) noexcept
 {
-    const int N = numTaps;
     auto* history = state.history.data();
     int writePos = state.writePos;
 
@@ -229,9 +254,10 @@ void InversionEngine::processChannel (ChannelState& state,
     {
         history[writePos] = static_cast<double> (data[i]);
 
-        double wet = dotProduct (state.history, writePos, currentKernel);
+        double wet = dotProduct (state.history, writePos, ringSize,
+                                 currentTaps, currentKernel);
 
-        if (blockFading)
+        if (blockFading && previousKernel != nullptr && previousTaps > 0)
         {
             const int position = fadeStart + i;
 
@@ -240,13 +266,14 @@ void InversionEngine::processChannel (ChannelState& state,
                 const double t = static_cast<double> (position)
                                  / static_cast<double> (fadeLength);
                 const double previousWet = dotProduct (state.history, writePos,
+                                                       ringSize, previousTaps,
                                                        previousKernel);
                 wet = previousWet * (1.0 - t) + wet * t;
             }
         }
 
         data[i] = static_cast<float> (wet);
-        writePos = (writePos + 1 == N) ? 0 : writePos + 1;
+        writePos = (writePos + 1 == ringSize) ? 0 : writePos + 1;
     }
 
     state.writePos = writePos;
@@ -267,6 +294,8 @@ void InversionEngine::consumePending()
                              std::memory_order_relaxed);
         currentIndex.store (pending, std::memory_order_relaxed);
         pendingIndex.store (-1, std::memory_order_relaxed);
+        activeTaps.store (kernels[static_cast<std::size_t> (pending)].taps,
+                          std::memory_order_relaxed);
         fading = true;
         fadePosition = 0;
     }
