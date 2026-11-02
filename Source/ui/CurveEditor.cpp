@@ -203,9 +203,9 @@ void CurveEditor::redo()
 juce::Rectangle<float> CurveEditor::plotArea() const
 {
     return getLocalBounds().toFloat()
-        .reduced (6.0f)
-        .withTrimmedTop (8.0f)
-        .withTrimmedLeft (34.0f)
+        .reduced (4.0f)
+        .withTrimmedTop (10.0f)
+        .withTrimmedLeft (24.0f)
         .withTrimmedRight (32.0f)
         .withTrimmedBottom (18.0f);
 }

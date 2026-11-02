@@ -85,6 +85,8 @@ cmake --build Build --config Release --target Polarity_VST3 Polarity_Standalone 
 
 - 模式按钮放在浅沙色底板里：未选中透明、选中墨底纸字；`SAVE` 为朱红底纸字；Undo/Redo 为幽灵文字。
 - 布局：品牌 / 预设+保存+旁通；副标题 + SLOPE/SMOOTH/TIME；A/B + L/ST/R + 工具在左，Undo/Redo + SPECTRUM/POLARITY 在右；主区曲线 + 瘦身 M/S；下方 WAVEFORM；底栏 MIX 左、WAVE/EDGE 右。
+- **统一左基准线**：标题、副标题、A/B、曲线 20Hz Y 轴、波形面板左缘、MIX 都落在同一条 40px 竖线上；左侧 40px 作为品牌斜杠 + INV/1.5/NULL/0.5 刻度槽。
+- **统一右基准线**：WAVEFORM 面板右缘与 M/S 面板右缘对齐，外框和内绘图区都参与对齐。
 - L = 钴蓝，R = 朱红，ST = 紫；频谱输入灰蓝、输出墨绿；热力图浅蓝 → 钴蓝 → 沙色 → 橙 → 朱红。
 - M/S 表：M 钴蓝、S 紫；波形输入灰蓝、输出墨绿。
 - 主题色集中在 `Source/ui/PolarityTheme.h`，按钮/下拉/滑杆/开关由 `PolarityLookAndFeel` 统一绘制。

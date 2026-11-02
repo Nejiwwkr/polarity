@@ -23,7 +23,7 @@ PolarityAudioProcessorEditor::PolarityAudioProcessorEditor (PolarityAudioProcess
     titleLabel.setColour (juce::Label::textColourId, polarity::theme::ink);
     addAndMakeVisible (titleLabel);
 
-    subtitleLabel.setText ("frequency inversion  /  inverted amount per band",
+    subtitleLabel.setText ("frequency inversion  /  inverted amount",
                            juce::dontSendNotification);
     subtitleLabel.setFont (juce::Font (juce::FontOptions (12.5f)));
     subtitleLabel.setJustificationType (juce::Justification::centredLeft);
@@ -384,7 +384,7 @@ void PolarityAudioProcessorEditor::paint (juce::Graphics& g)
 
     g.setColour (polarity::theme::vermilion);
     g.fillRect (0, 0, 2, getHeight());
-    g.drawLine (14.0f, 33.0f, 24.0f, 20.0f, 2.5f);
+    g.drawLine (26.0f, 33.0f, 36.0f, 20.0f, 2.5f);
 
     const auto groupBounds = [] (std::initializer_list<juce::Component*> components)
     {
@@ -410,10 +410,10 @@ void PolarityAudioProcessorEditor::paint (juce::Graphics& g)
 
 void PolarityAudioProcessorEditor::resized()
 {
-    auto area = getLocalBounds().reduced (16);
+    auto area = getLocalBounds().reduced (12);
 
     auto header = area.removeFromTop (34);
-    titleLabel.setBounds (header.removeFromLeft (220).withTrimmedLeft (14).reduced (0, 2));
+    titleLabel.setBounds (header.removeFromLeft (220).withTrimmedLeft (28).reduced (0, 2));
 
     auto headerRight = header;
     bypassToggle.setBounds (headerRight.removeFromRight (88).reduced (0, 4));
@@ -426,7 +426,7 @@ void PolarityAudioProcessorEditor::resized()
 
     auto analyzerRow = area.removeFromTop (28);
     subtitleLabel.setBounds (analyzerRow.removeFromLeft (340)
-                                 .withTrimmedLeft (14)
+                                 .withTrimmedLeft (28)
                                  .reduced (0, 4));
 
     auto analyzerControls = analyzerRow;
@@ -452,6 +452,7 @@ void PolarityAudioProcessorEditor::resized()
     auto controls = area.removeFromTop (38);
     auto row = controls.reduced (0, 4);
     row.removeFromRight (3);
+    row.removeFromLeft (28);
 
     const auto takeLeft = [&] (int width)
     {
@@ -498,15 +499,22 @@ void PolarityAudioProcessorEditor::resized()
     const int waveformHeight = juce::jlimit (
         140, 180, juce::roundToInt (area.getHeight() * 0.28f));
     auto waveform = area.removeFromBottom (waveformHeight);
+    const int waveformRight = waveform.getRight();
     area.removeFromBottom (12);
 
     auto meterArea = area.removeFromRight (82);
     area.removeFromRight (12);
     meterPanel.setBounds (meterArea);
     curveEditor.setBounds (area);
+
+    const int curvePlotLeft = curveEditor.getX() + 4 + 24;
+    waveform.setX (juce::jmax (waveform.getX(), curvePlotLeft - 8));
+    waveform.setWidth (waveformRight - waveform.getX());
     waveformPanel.setBounds (waveform);
+    waveformPanel.setPlotLeftInset (0);
 
     auto footerControls = footer.reduced (0, 4);
+    footerControls.removeFromLeft (28);
     mixCaption.setBounds (footerControls.removeFromLeft (36));
     mixSlider.setBounds (footerControls.removeFromLeft (210).reduced (0, 1));
 

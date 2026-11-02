@@ -29,6 +29,17 @@ void WaveformPanel::timerCallback()
     repaint();
 }
 
+void WaveformPanel::setPlotLeftInset (int inset)
+{
+    const int clamped = juce::jmax (0, inset);
+
+    if (plotLeftInset == clamped)
+        return;
+
+    plotLeftInset = clamped;
+    repaint();
+}
+
 void WaveformPanel::mouseDown (const juce::MouseEvent&)
 {
     if (! frozen)
@@ -86,7 +97,7 @@ void WaveformPanel::paint (juce::Graphics& g)
     g.setColour (polarity::theme::panel);
     g.fillRoundedRectangle (area, 8.0f);
 
-    auto inner = area.reduced (6.0f);
+    auto inner = area.reduced (6.0f).withTrimmedLeft (0.0f);
     auto header = inner.removeFromTop (12.0f);
 
     g.setFont (juce::Font (juce::FontOptions (10.0f)));
@@ -122,7 +133,7 @@ void WaveformPanel::paint (juce::Graphics& g)
 
     inner.removeFromTop (2.0f);
 
-    auto plot = inner;
+    auto plot = inner.withTrimmedLeft (static_cast<float> (plotLeftInset));
     g.setColour (kPanel);
     g.fillRoundedRectangle (plot, 6.0f);
 

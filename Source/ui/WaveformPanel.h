@@ -17,6 +17,8 @@ public:
     void paint (juce::Graphics&) override;
     void mouseDown (const juce::MouseEvent&) override;
 
+    void setPlotLeftInset (int inset);
+
 private:
     void timerCallback() override;
     float inputRmsAt (int point) const;
@@ -26,6 +28,7 @@ private:
     std::vector<float> frozenInput;
     std::vector<float> frozenOutput;
     int frozenWindowSamples = 0;
+    int plotLeftInset = 0;
     bool frozen = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (WaveformPanel)
