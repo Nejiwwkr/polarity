@@ -17,7 +17,7 @@ PolarityAudioProcessorEditor::PolarityAudioProcessorEditor (PolarityAudioProcess
 
     setSize (960, 720);
     setResizable (true, true);
-    setResizeLimits (920, 640, 1800, 1200);
+    setResizeLimits (940, 640, 1800, 1200);
 
     titleLabel.setText ("POLARITY", juce::dontSendNotification);
     titleLabel.setFont (juce::Font (juce::FontOptions (polarity::type::display)));
@@ -627,8 +627,9 @@ void PolarityAudioProcessorEditor::resized()
     row.removeFromLeft (4);
     redoButton.setBounds (takeLeft (54));
 
-    // Anchor the spectrum toggles' plate to the spectrum panel's right edge.
-    auto spectrumCluster = row.withRight (curveEditorRight - 3);
+    // Anchor POLARITY's right edge to the drawn spectrum plot's right edge.
+    auto spectrumCluster = row.withRight (curveEditorRight
+                                          - CurveEditor::plotRightInset);
     polarityButton.setBounds (spectrumCluster.removeFromRight (84));
     spectrumCluster.removeFromRight (2);
     spectrumButton.setBounds (spectrumCluster.removeFromRight (90));

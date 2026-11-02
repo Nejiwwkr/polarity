@@ -207,7 +207,7 @@ juce::Rectangle<float> CurveEditor::plotArea() const
         .reduced (4.0f)
         .withTrimmedTop (10.0f)
         .withTrimmedLeft (24.0f)
-        .withTrimmedRight (32.0f)
+        .withTrimmedRight (static_cast<float> (plotRightInset - 4))
         .withTrimmedBottom (18.0f);
 }
 

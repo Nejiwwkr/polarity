@@ -38,6 +38,10 @@ public:
     void setPolarityVisible (bool visible);
     void setSpectrumSlope (float dBPerOctave);
 
+    /** Distance from the component's right edge to the drawn plot's right
+        edge (4px outer inset + 32px dBFS label gutter). */
+    static constexpr int plotRightInset = 4 + 32;
+
     Layer getLayer() const noexcept { return layer; }
     Tool getTool() const noexcept { return tool; }
     bool isSpectrumVisible() const noexcept { return spectrumVisible; }

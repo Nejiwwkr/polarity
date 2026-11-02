@@ -91,8 +91,8 @@ cmake --build Build --config Release --target Polarity_VST3 Polarity_Standalone 
 
 - 模式按钮放在浅沙色底板里：未选中透明、选中墨底纸字；`SAVE` 为朱红底纸字；Undo/Redo 为幽灵文字。
 - 字体层级统一为四级：品牌 26 / 主要 13（副标题、鼠标读数）/ 控件 12（按钮、下拉、字段名、预设、滑杆数值）/ 注释 11（频率/反相量/dBFS 刻度、M/S、波形标题/提示、警告）；最小字号不低于 11。
-- 布局原则是“设置就近”：分析器行只放副标题与频谱的 SLOPE/SMOOTH/TIME；编辑行的顺序是 A|B → L/ST/R → 工具 → Undo/Redo，`SPECTRUM|POLARITY` 单独靠右，底板右缘与频谱面板右缘对齐；主区曲线 + 瘦身 M/S；波形面板头部放 WAVE/METRIC；底栏 MIX 左，QUALITY/EDGE 收进右侧 FIR 分组底板。
-- 窗口默认 960×720，最小 920×640；最小宽度保证 13pt 副标题与频谱簇不重叠。
+- 布局原则是“设置就近”：分析器行只放副标题与频谱的 SLOPE/SMOOTH/TIME；编辑行的顺序是 A|B → L/ST/R → 工具 → Undo/Redo，`SPECTRUM|POLARITY` 单独靠右，`POLARITY` 按钮右缘与频谱绘图区右缘（dBFS 刻度槽左侧）对齐；主区曲线 + 瘦身 M/S；波形面板头部放 WAVE/METRIC；底栏 MIX 左，QUALITY/EDGE 收进右侧 FIR 分组底板。
+- 窗口默认 960×720，最小 940×640；最小宽度保证 13pt 副标题与频谱簇不重叠，同时保持开关组与频谱绘图区对齐。
 - **统一左基准线**：标题、副标题、A/B、曲线 20Hz Y 轴、波形面板左缘、MIX 都落在同一条 40px 竖线上；左侧 40px 作为品牌斜杠 + INV/1.5/NULL/0.5 刻度槽。
 - **统一右基准线**：WAVEFORM 面板右缘与 M/S 面板右缘对齐，外框和内绘图区都参与对齐。
 - L = 钴蓝，R = 朱红，ST = 紫；频谱输入灰蓝、输出墨绿；热力图浅蓝 → 钴蓝 → 沙色 → 橙 → 朱红。
