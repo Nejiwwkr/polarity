@@ -1,0 +1,241 @@
+#pragma once
+
+#include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_dsp/juce_dsp.h>
+
+#include "dsp/CurveModel.h"
+#include "dsp/InversionEngine.h"
+
+#include <array>
+#include <atomic>
+#include <vector>
+
+class PolarityAudioProcessor final : public juce::AudioProcessor
+{
+public:
+    PolarityAudioProcessor();
+    ~PolarityAudioProcessor() override = default;
+
+    void prepareToPlay (double sampleRate, int samplesPerBlock) override;
+    void releaseResources() override;
+    bool isBusesLayoutSupported (const BusesLayout& layouts) const override;
+    void processBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+
+    juce::AudioProcessorEditor* createEditor() override;
+    bool hasEditor() const override { return true; }
+
+    const juce::String getName() const override { return JucePlugin_Name; }
+    bool acceptsMidi() const override { return false; }
+    bool producesMidi() const override { return false; }
+    bool isMidiEffect() const override { return false; }
+    double getTailLengthSeconds() const override { return 0.0; }
+
+    int getNumPrograms() override { return 1; }
+    int getCurrentProgram() override { return 0; }
+    void setCurrentProgram (int) override {}
+    const juce::String getProgramName (int) override { return {}; }
+    void changeProgramName (int, const juce::String&) override {}
+
+    juce::AudioProcessorParameter* getBypassParameter() const override;
+
+    void getStateInformation (juce::MemoryBlock&) override;
+    void setStateInformation (const void* data, int sizeInBytes) override;
+
+    juce::AudioProcessorValueTreeState& getValueTreeState() noexcept { return apvts; }
+    int getEngineLatencySamples() const noexcept { return engine.getLatencySamples(); }
+
+    /** channel: 0 = left, 1 = right. */
+    std::vector<polarity::dsp::CurvePoint> getCurvePoints (int channel) const;
+    void setCurvePoints (int channel, std::vector<polarity::dsp::CurvePoint> points);
+    void setCurves (std::vector<polarity::dsp::CurvePoint> leftPoints,
+                    std::vector<polarity::dsp::CurvePoint> rightPoints);
+
+    /** A/B curve slots.  slot is 0 (A) or 1 (B). */
+    int getActiveSlot() const noexcept { return activeSlot.load(); }
+    void setActiveSlot (int slot);
+
+    /** Broadcast when curves are replaced from host state or the A/B slot changes. */
+    juce::ChangeBroadcaster& getCurveBroadcaster() noexcept { return curveBroadcaster; }
+
+    float getMeterMidDb() const noexcept { return meterMidDb.load (std::memory_order_relaxed); }
+    float getMeterSideDb() const noexcept { return meterSideDb.load (std::memory_order_relaxed); }
+    float getMeterCorrelation() const noexcept
+    {
+        return meterCorrelation.load (std::memory_order_relaxed);
+    }
+
+    static constexpr int getSpectrumBandCount() noexcept { return spectrumBands; }
+    static constexpr int getWaveformPointCount() noexcept { return waveformPoints; }
+
+    float getSpectrumInput (int band) const noexcept
+    {
+        return spectrumInput[static_cast<std::size_t> (
+                    juce::jlimit (0, spectrumBands - 1, band))]
+            .load (std::memory_order_relaxed);
+    }
+
+    float getSpectrumOutput (int band) const noexcept
+    {
+        return spectrumOutput[static_cast<std::size_t> (
+                    juce::jlimit (0, spectrumBands - 1, band))]
+            .load (std::memory_order_relaxed);
+    }
+
+    float getWaveformInputMin (int point) const noexcept
+    {
+        return waveformInputMin[static_cast<std::size_t> (
+                    juce::jlimit (0, waveformPoints - 1, point))]
+            .load (std::memory_order_relaxed);
+    }
+
+    float getWaveformInputMax (int point) const noexcept
+    {
+        return waveformInputMax[static_cast<std::size_t> (
+                    juce::jlimit (0, waveformPoints - 1, point))]
+            .load (std::memory_order_relaxed);
+    }
+
+    float getWaveformOutputMin (int point) const noexcept
+    {
+        return waveformOutputMin[static_cast<std::size_t> (
+                    juce::jlimit (0, waveformPoints - 1, point))]
+            .load (std::memory_order_relaxed);
+    }
+
+    float getWaveformOutputMax (int point) const noexcept
+    {
+        return waveformOutputMax[static_cast<std::size_t> (
+                    juce::jlimit (0, waveformPoints - 1, point))]
+            .load (std::memory_order_relaxed);
+    }
+
+    float getWaveformInputRms (int point) const noexcept
+    {
+        return waveformInputRms[static_cast<std::size_t> (
+                    juce::jlimit (0, waveformPoints - 1, point))]
+            .load (std::memory_order_relaxed);
+    }
+
+    float getWaveformOutputRms (int point) const noexcept
+    {
+        return waveformOutputRms[static_cast<std::size_t> (
+                    juce::jlimit (0, waveformPoints - 1, point))]
+            .load (std::memory_order_relaxed);
+    }
+
+    /** Waveform time window in samples; 2048 .. 16384. */
+    void setWaveformWindow (int samples) noexcept
+    {
+        waveformWindowSamples.store (
+            juce::jlimit (1024, maxWaveformSamples, samples),
+            std::memory_order_relaxed);
+    }
+
+    int getWaveformWindowSamples() const noexcept
+    {
+        return waveformWindowSamples.load (std::memory_order_relaxed);
+    }
+
+    /** Spectrum smoothing radius in log bands; 0 = off, 2 ~ 1/12 oct, 4 ~ 1/6, 8 ~ 1/3. */
+    void setSpectrumSmoothing (int radiusBands) noexcept
+    {
+        spectrumSmoothingRadius.store (
+            juce::jlimit (0, 16, radiusBands),
+            std::memory_order_relaxed);
+    }
+
+    int getSpectrumSmoothing() const noexcept
+    {
+        return spectrumSmoothingRadius.load (std::memory_order_relaxed);
+    }
+
+    /** Spectrum temporal smoothing time constant in milliseconds. */
+    void setSpectrumTimeSmoothing (float milliseconds) noexcept
+    {
+        spectrumTimeSmoothingMs.store (
+            juce::jlimit (10.0f, 2000.0f, milliseconds),
+            std::memory_order_relaxed);
+    }
+
+    float getSpectrumTimeSmoothing() const noexcept
+    {
+        return spectrumTimeSmoothingMs.load (std::memory_order_relaxed);
+    }
+
+    /** FIR edge smoothing radius in FFT bins; 0 = exact curve, 2 = gentler edges. */
+    void setCurveSmoothing (int bins);
+    int getCurveSmoothing() const noexcept
+    {
+        return curveSmoothingBins.load (std::memory_order_relaxed);
+    }
+
+private:
+    struct CurveSlot
+    {
+        polarity::dsp::CurveModel left;
+        polarity::dsp::CurveModel right;
+    };
+
+    static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
+    static std::vector<polarity::dsp::CurvePoint> defaultCurvePoints();
+    static juce::ValueTree curveToTree (const juce::String& channel,
+                                        const polarity::dsp::CurveModel& curve);
+    static void readCurve (const juce::ValueTree& parent,
+                           const juce::String& channel,
+                           polarity::dsp::CurveModel& model);
+
+    void writeCurvesToState();
+    void loadCurvesFromState();
+    void rebuildKernels();
+    void updateAnalysis (int wetLatency, int blockSamples);
+    void resetAnalysis();
+
+    juce::AudioProcessorValueTreeState apvts;
+    std::atomic<float>* mixParam = nullptr;
+    std::atomic<float>* bypassParam = nullptr;
+
+    mutable juce::CriticalSection curveLock;
+    std::array<CurveSlot, 2> slots;
+    std::atomic<int> activeSlot { 0 };
+    juce::ChangeBroadcaster curveBroadcaster;
+    std::atomic<double> currentSampleRate { 0.0 };
+
+    std::atomic<float> meterMidDb { -72.0f };
+    std::atomic<float> meterSideDb { -72.0f };
+    std::atomic<float> meterCorrelation { 0.0f };
+
+    static constexpr int fftOrder = 14;
+    static constexpr int fftSize = 1 << fftOrder;
+    static constexpr int spectrumBands = 512;
+    static constexpr int waveformPoints = 512;
+    static constexpr int maxWaveformSamples = 131072;
+
+    juce::dsp::FFT analysisFft { fftOrder };
+    std::vector<float> analysisWork;
+    std::vector<float> hannWindow;
+    std::vector<float> inputAnalysisRing;
+    std::vector<float> outputAnalysisRing;
+    int inputAnalysisWrite = 0;
+    int outputAnalysisWrite = 0;
+    std::atomic<int> waveformWindowSamples { 65536 };
+    std::atomic<int> spectrumSmoothingRadius { 2 };
+    std::atomic<float> spectrumTimeSmoothingMs { 200.0f };
+    std::atomic<int> curveSmoothingBins { 2 };
+    std::array<std::atomic<float>, spectrumBands> spectrumInput;
+    std::array<std::atomic<float>, spectrumBands> spectrumOutput;
+    std::array<std::atomic<float>, waveformPoints> waveformInputMin;
+    std::array<std::atomic<float>, waveformPoints> waveformInputMax;
+    std::array<std::atomic<float>, waveformPoints> waveformOutputMin;
+    std::array<std::atomic<float>, waveformPoints> waveformOutputMax;
+    std::array<std::atomic<float>, waveformPoints> waveformInputRms;
+    std::array<std::atomic<float>, waveformPoints> waveformOutputRms;
+
+    polarity::dsp::InversionEngine engine;
+    juce::AudioBuffer<float> dryCopy;
+    std::vector<std::vector<float>> dryDelay;
+    std::vector<int> dryDelayIndex;
+
+    static constexpr int numTaps = 4096;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PolarityAudioProcessor)
+};

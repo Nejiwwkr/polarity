@@ -1,0 +1,178 @@
+# Polarity — 频率反相效果器
+
+一个 VST3 效果器：按 **L / ST(Stereo) / R** 绘制一条以频率为 x 轴、以“向该频段添加多少反相信号”为 y 轴的曲线。它不是普通 EQ 的 gain 曲线，而是零相位幅度加权：
+
+```
+Y_c(f) = (1 − A_c(f)) · X_c(f)        A_c(f) ∈ [0, 2]
+```
+
+| A | 听感/效果 | 等效幅度 |
+|---|---|---|
+| 0 | 原样 | +1 |
+| 0–1 | 部分抵消 | 1−A |
+| 1 | 该频段完全抵消（NULL） | 0 |
+| 1–2 | 开始反向 | 1−A（负） |
+| 2 | 该频段完全极性反转（INVERT） | −1 |
+
+与普通 EQ 的区别：普通 EQ 的 cut 是最小相位滤波，cut 后的信号与原信号相加不会抵消；这里用零相位 FIR 实现 `1−A` 的幅度加权，`A=1` 是真正的频带 null，`A=2` 是真正的极性反转。L/ST/R 底层只存 `A_L`、`A_R` 两条曲线；编辑 ST 时同时写入两侧。不提供 Mid/Side 编辑层，但会显示 M/S 电平与相关度作为警告（单侧反相会把能量推入 Side）。
+
+## 当前进度
+
+- [x] DSP 数学验证（Python 参考实现）
+- [x] C++ DSP 核心：CurveModel（PCHIP）、Fft、FirDesigner、InversionEngine
+- [x] JUCE 8 插件工程：CMake + VST3 + Standalone 构建通过
+- [x] AudioProcessor 集成：2048 样本延迟、mix/bypass、PDC
+- [x] M2：曲线编辑器（L/ST/R、DRAW/NODE/ERASE、undo/redo）、每通道曲线、
+      实时换核 + 60ms 交叉淡化、曲线随工程/预设保存
+- [x] M3：M/S 电平表 + 相关度、A/B 曲线槽、文件预设栏
+- [x] 画布叠加：输入/输出频谱、反相量热力图（SPECTRUM / POLARITY 开关）
+- [x] 波形对比：输入/输出填充、Fast / Normal / Slow / Very slow 速度档
+- [x] 离线测试：DSP 自检 + Processor 集成测试 + A/B/预设/计量/分析 + 编辑器 smoke 全部 PASS
+- [ ] M4：质量档（2048/4096/8192）、采样率矩阵、pluginval、CPU 优化、打包
+
+当前插件默认曲线是**平直（A=0，透明）**。用 DRAW 在画布上画出反相量；ST 层会同时写入 L 和 R。
+
+## 构建
+
+```bash
+cmake -S . -B Build -G "Visual Studio 17 2022" -A x64
+cmake --build Build --config Release --target Polarity_VST3 Polarity_Standalone PolarityTests --parallel 4
+```
+
+产物：
+
+- VST3：`Build/Polarity_artefacts/Release/VST3/Polarity.vst3`
+- Standalone：`Build/Polarity_artefacts/Release/Standalone/Polarity.exe`
+- 集成测试：`Build/PolarityTests_artefacts/Release/PolarityTests.exe`
+
+`COPY_PLUGIN_AFTER_BUILD` 目前为 `FALSE`，避免写入系统 VST3 目录需要管理员权限。在 DAW 里把插件扫描路径指向上面的 VST3 文件夹，或手动复制到用户级 `%APPDATA%\VST3`。
+
+## 使用
+
+- 默认曲线平直，插件透明。
+- **DRAW**：按住拖动，在光标频率直接写入反相量。
+- **EDGE**（底部）：Off / 1 bin / 2 bins / 4 bins（默认 2 bins）。在 FIR 设计时对 H(f) 过渡做频域平滑，缓解陡峭曲线边界的振铃/预回声；A=0/A=2 的平坦区域仍然精确。
+- **NODE**：拖动控制点；双击空白加点；右键点击控制点删除。
+- **ERASE**：在局部把曲线擦回 0。
+- **L / ST / R**：L 只编辑左通道，R 只编辑右通道，ST 同时写入两侧。
+- y 轴：0 = 原样，1 = NULL（完全抵消），2 = INVERT（极性反转）；x 轴 20Hz–20kHz。
+- UNDO / REDO 撤销重做；MIX 干湿；BYPASS 保持延迟对齐。
+- **A/B**：两套独立曲线槽，点 `A/B` 切换；两套曲线都随工程保存。
+- 右侧 **M/S** 表：显示处理后的 Mid/Side 电平与 L/R 相关度；相关度为负时变红，提示单声道兼容风险。
+- **画布叠加**（`SPECTRUM` / `POLARITY` 两个开关）：
+  - SPECTRUM：浅色线 = 输入（已按插件延迟对齐），亮色主线 = 输出；纵轴 −100…0 dB，刻度在画布右侧。
+  - 分析：16384 点 FFT、512 个对数频带、±2 bin 三角窗功率加权；SMOOTH 可选 Off / 1/12 / 1/6 / 1/3 oct（默认 1/12）；TIME 可选 50 / 100 / 200 / 400 ms（默认 200ms）；画布 30Hz 定时刷新，不依赖鼠标悬停。
+  - 右侧带 dBFS 刻度（0 / −20 / … / −100）；SLOPE 可选 Flat / 3 / 4.5 / 6 dB/oct（默认 4.5），用于和 Pro-Q 的 Analyzer Slope 对齐；TIME 控制频谱跟随速度。
+  - 与 Pro-Q 对比时看输出（亮色）曲线，并把 Pro-Q 的分析器放在 Polarity 之后、斜率设成相同值；两者的 FFT 窗口、立体声求和方式不同，不会逐点一致。
+  - POLARITY：频谱与 x 轴之间的面积按当前编辑层的 A(f) 着色；画布底部另有 L/R 两行极性条。
+  - 颜色：深蓝 0 → 蓝 0.5 → 浅灰 NULL → 橙 1.5 → 红 INV 2。
+  - 关掉 SPECTRUM 后 POLARITY 仍会显示底部极性条；两个都关则完全隐藏。
+- 底部 **WAVEFORM**：浅色 = 输入，亮色 = 输出；波形与零轴之间填充。
+  - `WAVE` 下拉：Fast / Normal / Slow / Very slow / Extreme / Ultra，对应约 85 / 170 / 341 / 682 / 1365 / 2731 ms @48k 的时间窗口，默认 **Extreme（1365ms）**。
+  - 波形使用每个时间桶的 RMS 并映射到 dB 包络（−60…0 dB），长窗口下是可读的电平轮廓，而不是密集的峰值锯齿；窗口越长，移动越慢。
+  - **单击波形区域冻结当前快照，再单击恢复实时**；冻结时标题和提示变黄，并保持冻结时的窗口毫秒数。
+  - 面板右上角显示实际毫秒数。
+  - 频谱与波形使用 L/R 单声道和；左右差异大时结合右侧 M/S 表判断。
+- **PRESET**：顶部输入名字后点 SAVE；下拉选择即加载。预设保存在
+  `%APPDATA%\Polarity\Presets`（XML），包含 A/B 两套曲线、当前槽、mix/bypass。
+- 曲线随工程/预设保存；宿主恢复状态时编辑器自动刷新。
+- 拖动曲线时后台实时重建 FIR，引擎用 60ms 交叉淡化换核，不会爆音。
+
+## 测试
+
+```bash
+# 纯 C++ DSP 自检（numpy 参考实现的等价物，可用 MinGW 或 MSVC 编译）
+g++ -std=c++17 -O3 -I Source Source/dsp/CurveModel.cpp Source/dsp/Fft.cpp \
+    Source/dsp/FirDesigner.cpp Tests/dsp_tests.cpp -o Build/dsp_tests.exe
+PATH="/c/mingw64/bin:$PATH" ./Build/dsp_tests.exe
+
+# 真实 AudioProcessor 离线测试（JUCE）
+./Build/PolarityTests_artefacts/Release/PolarityTests.exe
+```
+
+实测结果（48kHz，4096 taps）：
+
+```
+DSP:
+  identity       : max error 0.000e+00
+  full invert    : max error 0.000e+00
+  band null      : 400Hz -82.2dB / 800Hz -83.2dB / 1200Hz -84.6dB / 1600Hz -86.7dB
+  latency        : 2048 samples (42.7 ms)
+  resolution     : 11.72 Hz
+
+Processor:
+  latency          : 2048 samples
+  L 400 Hz null    : -96.2 dB   (L 曲线 null，R 曲线平直，EDGE=2 bins)
+  R 400 Hz pass    : -0.0 dB
+  L 5 kHz pass     : -0.0 dB
+  mix=0 dry error  : 0.000e+00
+  bypass error     : 0.000e+00
+  crossfade maxstep: 0.0653      (等于 1kHz 正弦自身的每样本斜率，无换核爆音)
+  crossfade tail   : -97.8 dB    (换核后新曲线确实生效)
+  A/B slots        : PASS        (两套曲线 + 当前槽随状态保存/恢复)
+  preset roundtrip : PASS        (临时目录保存/加载往返)
+  meters corr/anti : +1.00 / -1.00  (side -72.0 / mid -72.0 dB)
+  meters test      : PASS
+  analysis f/n     : -18.3/-18.3 -> -18.0/-114.5 dB  wave 0.0000
+  analysis test    : PASS        (1kHz 正弦：输入/输出频谱、NULL 后输出与波形)
+  editor smoke     : PASS        (构造 UI + 离屏重绘，含 M/S 表、频谱、波形、双曲线)
+  PROCESSOR TEST   : PASS
+```
+
+## 试听参考实现
+
+`Demo/` 下是参考实现生成的 8 秒对数扫频素材（`*-dry.wav` 为干声）：
+
+- `st-null.wav`：200Hz–2kHz 完全抵消（与当前插件的固定曲线一致）
+- `split.wav`：L 抵消 200–800Hz、R 抵消 3–8kHz
+- `shelf-invert.wav`：200–800Hz 极性反转（A=2）
+- `identity.wav`：A=0，完全透明
+
+重新生成：
+
+```bash
+python Tools/reference_render.py --preset split --out Demo/split.wav --compensate
+python Tools/reference_render.py --self-test
+```
+
+## 设计要点
+
+- **零相位 FIR**：在 N/2+1 个频点采样 `H=1−A`，补共轭对称谱，IFFT 后循环右移 N/2。延迟 `N/2` 样本，频率分辨率 `fs/N`。
+- **不加窗**：加窗会破坏 `A=0`/`A=2` 的精确性。频域采样的 Dirichlet 插值纹波是固有代价，用 taps 和曲线平滑度管理。
+- **默认 4096 taps**：48kHz 下 42.7ms 延迟、11.7Hz 分辨率；正式版提供 2048/4096/8192 质量档。
+- **曲线模型**：控制点 + PCHIP（log 频率），20Hz/20kHz 端点固定为 0。
+- **状态规划**：曲线整体存插件状态，仅 bypass / mix / L、R 总反相量做可自动化宏参数。
+
+完整方案见：`C:\Users\lenovo\.claude\plans\vst-left-stereo-right-eq-mid-side-mid-s-shimmering-deer.md`。
+
+## 工程结构
+
+```
+CMakeLists.txt
+Source/
+  PluginProcessor.h/.cpp        # APVTS、A/B 曲线槽、计量、总线、延迟、dry/wet、PDC
+  PluginEditor.h/.cpp           # 主界面、预设栏、A/B、层/工具按钮、MIX/BYPASS
+  ui/
+    CurveEditor.h/.cpp          # 画布、L/ST/R、工具、undo、频谱/热力图叠加
+    MeterPanel.h/.cpp           # M/S 电平与相关度表
+    WaveformPanel.h/.cpp        # 输入/输出波形、填充、速度窗口
+  state/
+    PresetManager.h/.cpp        # 文件预设（用户目录 XML）
+  dsp/
+    CurveModel.h/.cpp           # PCHIP 曲线
+    Fft.h/.cpp                  # radix-2 FFT
+    FirDesigner.h/.cpp          # 频域采样 -> 线性相位 FIR
+    InversionEngine.h/.cpp      # 每通道 FIR + 4 缓冲换核 + 交叉淡化
+Tests/
+  dsp_tests.cpp                 # 纯 DSP 自检
+  processor_tests.cpp           # AudioProcessor 集成测试
+Tools/reference_render.py       # numpy/scipy 参考实现
+ThirdParty/JUCE-8.0.15/         # 本地 vendored JUCE（不入库）
+Demo/                           # 试听 WAV（可重新生成，不入库）
+```
+
+## 已解决的构建前提
+
+- Visual Studio Community 2022（D 盘），MSVC 14.43，Windows SDK 10.0.22621。
+- JUCE 8.0.15 已解压到 `ThirdParty/JUCE-8.0.15/JUCE`。
+- 本机 CMake 4.0.0-rc4 实测可用。

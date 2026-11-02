@@ -1,0 +1,29 @@
+# Build
+Build/
+build/
+out/
+.vs/
+CMakeFiles/
+CMakeCache.txt
+*.vcxproj*
+*.sln
+*.user
+
+.idea/
+
+# Vendored dependency and release archive
+ThirdParty/
+juce-*.zip
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Demo audio (regenerate with Tools/reference_render.py)
+# also some screen shots
+/Demo/
+
+# OS
+Thumbs.db
+.DS_Store
