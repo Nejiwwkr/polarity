@@ -213,9 +213,6 @@ void PolarityLookAndFeel::drawTooltip (juce::Graphics& g,
                                          static_cast<float> (width),
                                          static_cast<float> (height));
 
-    juce::DropShadow (juce::Colour (0x16000000), 6, { 0, 2 })
-        .drawForRectangle (g, bounds.toNearestInt());
-
     g.setColour (paperBright);
     g.fillRoundedRectangle (bounds.reduced (0.5f), 6.0f);
 

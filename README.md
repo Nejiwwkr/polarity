@@ -53,6 +53,8 @@ cmake --build Build --config Release --target Polarity_VST3 Polarity_Standalone 
 
 `COPY_PLUGIN_AFTER_BUILD` 目前为 `FALSE`，避免写入系统 VST3 目录需要管理员权限。在 DAW 里把插件扫描路径指向上面的 VST3 文件夹，或手动复制到用户级 `%APPDATA%\VST3`。
 
+VST3 元数据把插件声明为 **Fx + EQ** 子分类（`VST3_CATEGORIES Fx EQ`，对应 `moduleinfo.json` 的 `Sub Categories: ["Fx","EQ"]`）。FL 重新扫描插件后会读取它；如果 FL 的浏览器仍按自己的 plugin database 归类，可以在 FL 里手动移动。
+
 ## 使用
 
 - 默认曲线平直，插件透明。

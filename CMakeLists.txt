@@ -22,7 +22,7 @@ juce_add_plugin(Polarity
     IS_MIDI_EFFECT          FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     COPY_PLUGIN_AFTER_BUILD FALSE
-    VST3_CATEGORIES         "Fx"
+    VST3_CATEGORIES         Fx EQ
 )
 
 target_sources(Polarity PRIVATE
