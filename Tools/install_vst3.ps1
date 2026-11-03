@@ -1,41 +1,97 @@
-# 把构建好的 Polarity.vst3 安装到 FL Studio 20.9 唯一会扫描的 VST3 目录。
-# 用法：右键“使用 PowerShell 运行”，或在 PowerShell 里执行本脚本；会自动请求管理员权限。
+param(
+    [string]$Source = '',
+    [switch]$System,
+    [string]$Destination = '',
+    [switch]$NoPause
+)
 
 $ErrorActionPreference = 'Stop'
 
-$source = Join-Path $PSScriptRoot '..\Build\Polarity_artefacts\Release\VST3\Polarity.vst3'
+if ([string]::IsNullOrWhiteSpace($Source)) {
+    $repoBuild = Join-Path $PSScriptRoot '..\Build\Polarity_artefacts\Release\VST3\Polarity.vst3'
+    $packaged = Join-Path $PSScriptRoot 'VST3\Polarity.vst3'
 
-if (-not (Test-Path -LiteralPath $source)) {
-    throw "未找到构建产物，请先构建 Polarity_VST3：$source"
+    if (Test-Path -LiteralPath $repoBuild) {
+        $Source = $repoBuild
+    }
+    elseif (Test-Path -LiteralPath $packaged) {
+        $Source = $packaged
+    }
+    else {
+        throw 'Polarity.vst3 not found. Build Polarity_VST3 or run this script from the release package.'
+    }
 }
 
-$source = (Resolve-Path -LiteralPath $source).Path
-$destinationDirectory = 'C:\Program Files\Common Files\VST3'
-$destination = Join-Path $destinationDirectory 'Polarity.vst3'
+if (-not (Test-Path -LiteralPath $Source)) {
+    throw "Polarity.vst3 not found: $Source"
+}
+
+$Source = (Resolve-Path -LiteralPath $Source).Path
+
+if ([string]::IsNullOrWhiteSpace($Destination)) {
+    if ($System) {
+        $Destination = 'C:\Program Files\Common Files\VST3'
+    }
+    else {
+        $Destination = Join-Path $env:APPDATA 'VST3'
+    }
+}
 
 $principal = New-Object Security.Principal.WindowsPrincipal(
     [Security.Principal.WindowsIdentity]::GetCurrent())
 
-if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Write-Host '需要管理员权限，正在重新启动...'
-    Start-Process powershell.exe -Verb RunAs -ArgumentList @(
+if ($System -and -not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Host 'Administrator rights are required for a system-wide install. Relaunching...'
+
+    $arguments = @(
         '-NoProfile',
         '-ExecutionPolicy', 'Bypass',
-        '-File', "`"$PSCommandPath`""
+        '-File', "`"$PSCommandPath`"",
+        '-System',
+        '-Source', "`"$Source`"",
+        '-Destination', "`"$Destination`""
     )
+
+    if ($NoPause) {
+        $arguments += '-NoPause'
+    }
+
+    Start-Process powershell.exe -Verb RunAs -ArgumentList $arguments
     exit
 }
 
-if (Test-Path -LiteralPath $destination) {
-    Remove-Item -LiteralPath $destination -Recurse -Force
+New-Item -ItemType Directory -Force -Path $Destination | Out-Null
+$target = Join-Path $Destination 'Polarity.vst3'
+
+if (Test-Path -LiteralPath $target) {
+    try {
+        Remove-Item -LiteralPath $target -Recurse -Force
+    }
+    catch {
+        throw "Could not replace $target. Close any DAW using the plugin and try again."
+    }
 }
 
-Copy-Item -LiteralPath $source -Destination $destination -Recurse -Force
-Write-Host "已安装到: $destination"
+Copy-Item -LiteralPath $Source -Destination $target -Recurse -Force
+
 Write-Host ''
-Write-Host '回到 FL Studio：Options -> Manage plugins'
-Write-Host '  1. 确认 VST3 路径包含 C:\Program Files\Common Files\VST3'
-Write-Host '  2. 勾选 Verify plugins / Rescan previously verified plugins / Rescan plugins with errors'
-Write-Host '  3. 点击 Find installed plugins，扫描完成后重启 FL Studio'
+Write-Host "Installed: $target"
 Write-Host ''
-Read-Host '按 Enter 关闭'
+
+if ($System) {
+    Write-Host 'System VST3 folder. FL Studio scans this location by default.'
+}
+else {
+    Write-Host 'User VST3 folder. Add this path in FL Studio -> Options -> Manage plugins:'
+    Write-Host "  $Destination"
+}
+
+Write-Host ''
+Write-Host 'In FL Studio: Options -> Manage plugins -> Find installed plugins.'
+Write-Host 'Do not keep both the user-level and system-wide copies installed;'
+Write-Host 'remove the one you no longer want to avoid duplicate entries.'
+Write-Host ''
+
+if (-not $NoPause) {
+    Read-Host 'Press Enter to close'
+}

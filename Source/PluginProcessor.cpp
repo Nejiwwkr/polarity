@@ -933,6 +933,8 @@ void PolarityAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
     if (curves.isValid())
         curves.setProperty ("active", slot, nullptr);
 
+    state.setProperty ("stateVersion", getStateVersion(), nullptr);
+
     const std::unique_ptr<juce::XmlElement> xml (state.createXml());
 
     if (xml != nullptr)
@@ -946,7 +948,8 @@ void PolarityAudioProcessor::setStateInformation (const void* data, int sizeInBy
     if (xml == nullptr || ! xml->hasTagName (apvts.state.getType()))
         return;
 
-    // Older states predate the slot / quality parameters.
+    // Version 0 predates the slot / quality parameters and the schema marker.
+    const int sourceVersion = xml->getIntAttribute ("stateVersion", 0);
     const bool hasSlotParameter = xml->getChildByAttribute ("id", "slot") != nullptr;
     const bool hasQualityParameter = xml->getChildByAttribute ("id", "quality") != nullptr;
 
@@ -964,7 +967,8 @@ void PolarityAudioProcessor::setStateInformation (const void* data, int sizeInBy
     if (! hasSlotParameter)
         writeParameterValue ("slot", legacySlot);
 
-    if (! hasQualityParameter)
+    // A versioned state's root "quality" property is stale by definition.
+    if (! hasQualityParameter && sourceVersion == 0)
         writeParameterValue ("quality", legacyQuality);
 
     loadingState.store (false, std::memory_order_release);
@@ -989,6 +993,7 @@ void PolarityAudioProcessor::setStateInformation (const void* data, int sizeInBy
         curveSmoothingBins.store (edgeBins);
         writeCurvesToState();
         apvts.state.removeProperty ("quality", nullptr);
+        apvts.state.setProperty ("stateVersion", getStateVersion(), nullptr);
     }
 
     if (currentSampleRate.load (std::memory_order_relaxed) > 0.0)

@@ -47,6 +47,9 @@ public:
     juce::AudioProcessorValueTreeState& getValueTreeState() noexcept { return apvts; }
     int getEngineLatencySamples() const noexcept { return engine.getLatencySamples(); }
 
+    /** Serialized state schema; increment with any structural change. */
+    static constexpr int getStateVersion() noexcept { return 1; }
+
     /** FIR quality: 0 = 2048 taps, 1 = 4096 taps, 2 = 8192 taps. */
     static constexpr int getQualityChoiceCount() noexcept { return 3; }
 

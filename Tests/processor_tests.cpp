@@ -16,6 +16,12 @@ constexpr double kPi = 3.14159265358979323846264338327950288;
 constexpr double kSampleRate = 48000.0;
 constexpr int blockSize = 512;
 
+struct AudioConfig
+{
+    double sampleRate = kSampleRate;
+    int blockSize = ::blockSize;
+};
+
 using polarity::dsp::CurvePoint;
 
 std::vector<CurvePoint> flatCurve()
@@ -43,6 +49,17 @@ std::vector<CurvePoint> highNullCurve()
              { 20000.0, 0.0 } };
 }
 
+/** Wide transitions survive the coarser bin spacing at 192 kHz. */
+std::vector<CurvePoint> wideNullCurve()
+{
+    return { { 20.0, 0.0 },
+             { 100.0, 0.0 },
+             { 500.0, 1.0 },
+             { 5000.0, 1.0 },
+             { 10000.0, 0.0 },
+             { 20000.0, 0.0 } };
+}
+
 bool hasPointNear (const std::vector<CurvePoint>& points,
                    double freq,
                    double amount,
@@ -65,38 +82,50 @@ int bandForFreq (double freq)
                          static_cast<int> (std::round (t * bands)));
 }
 
-void fillSine (juce::AudioBuffer<float>& buffer, int startSample, double freq)
+void fillSine (juce::AudioBuffer<float>& buffer, int startSample, int numSamples,
+               double freq, double sampleRate)
 {
     for (int channel = 0; channel < buffer.getNumChannels(); ++channel)
-        for (int i = 0; i < buffer.getNumSamples(); ++i)
+        for (int i = 0; i < numSamples; ++i)
             buffer.setSample (channel, i,
                               0.5f * static_cast<float> (std::sin (
                                   2.0 * kPi * freq
-                                  * static_cast<double> (startSample + i) / kSampleRate)));
+                                  * static_cast<double> (startSample + i) / sampleRate)));
+}
+
+void fillSine (juce::AudioBuffer<float>& buffer, int startSample, double freq)
+{
+    fillSine (buffer, startSample, buffer.getNumSamples(), freq, kSampleRate);
 }
 
 double measureSineGainDb (PolarityAudioProcessor& processor,
                           double freq,
-                          int channel)
+                          int channel,
+                          AudioConfig cfg = {},
+                          double seconds = 1.0)
 {
-    processor.prepareToPlay (kSampleRate, blockSize);
+    processor.prepareToPlay (cfg.sampleRate, cfg.blockSize);
 
-    juce::AudioBuffer<float> buffer (2, blockSize);
+    const int channels = juce::jmax (1, processor.getTotalNumInputChannels());
+    juce::AudioBuffer<float> buffer (channels, cfg.blockSize);
     juce::MidiBuffer midi;
+    const int total = static_cast<int> (cfg.sampleRate * seconds);
     double sum = 0.0;
     int count = 0;
 
-    for (int position = 0; position < static_cast<int> (kSampleRate);
-         position += blockSize)
+    for (int position = 0; position < total; position += cfg.blockSize)
     {
-        fillSine (buffer, position, freq);
-        processor.processBlock (buffer, midi);
+        const int n = std::min (cfg.blockSize, total - position);
+        fillSine (buffer, position, n, freq, cfg.sampleRate);
 
-        if (position >= static_cast<int> (kSampleRate * 0.5))
+        juce::AudioBuffer<float> view (buffer.getArrayOfWritePointers(), channels, n);
+        processor.processBlock (view, midi);
+
+        if (position >= total / 2)
         {
-            for (int i = 0; i < blockSize; ++i)
+            for (int i = 0; i < n; ++i)
             {
-                const double value = buffer.getSample (channel, i);
+                const double value = view.getSample (channel, i);
                 sum += value * value;
                 ++count;
             }
@@ -109,7 +138,9 @@ double measureSineGainDb (PolarityAudioProcessor& processor,
 
 double measureDelayedDryError (PolarityAudioProcessor& processor,
                                float mix,
-                               bool bypassed)
+                               bool bypassed,
+                               AudioConfig cfg = {},
+                               double seconds = 1.0)
 {
     auto* mixParameter = processor.getValueTreeState().getParameter ("mix");
     auto* bypassParameter = processor.getValueTreeState().getParameter ("bypass");
@@ -119,10 +150,15 @@ double measureDelayedDryError (PolarityAudioProcessor& processor,
 
     mixParameter->setValueNotifyingHost (mix);
     bypassParameter->setValueNotifyingHost (bypassed ? 1.0f : 0.0f);
-    processor.prepareToPlay (kSampleRate, blockSize);
 
-    const int total = static_cast<int> (kSampleRate);
-    juce::AudioBuffer<float> buffer (2, blockSize);
+    if (auto* delta = processor.getValueTreeState().getParameter ("deltaOut"))
+        delta->setValueNotifyingHost (0.0f);
+
+    processor.prepareToPlay (cfg.sampleRate, cfg.blockSize);
+
+    const int channels = juce::jmax (1, processor.getTotalNumInputChannels());
+    const int total = static_cast<int> (cfg.sampleRate * seconds);
+    juce::AudioBuffer<float> buffer (channels, cfg.blockSize);
     juce::MidiBuffer midi;
 
     std::mt19937 rng (3);
@@ -134,21 +170,21 @@ double measureDelayedDryError (PolarityAudioProcessor& processor,
     for (auto& value : input)
         value = noise (rng);
 
-    for (int position = 0; position < total; position += blockSize)
+    for (int position = 0; position < total; position += cfg.blockSize)
     {
-        const int count = std::min (blockSize, total - position);
+        const int count = std::min (cfg.blockSize, total - position);
 
-        for (int channel = 0; channel < 2; ++channel)
+        for (int channel = 0; channel < channels; ++channel)
             for (int i = 0; i < count; ++i)
                 buffer.setSample (channel, i,
                                   input[static_cast<std::size_t> (position + i)]);
 
-        processor.processBlock (buffer, midi);
+        juce::AudioBuffer<float> view (buffer.getArrayOfWritePointers(), channels, count);
+        processor.processBlock (view, midi);
 
-        for (int channel = 0; channel < 2; ++channel)
-            for (int i = 0; i < count; ++i)
-                output[static_cast<std::size_t> (position + i)]
-                    = buffer.getSample (channel, i);
+        for (int i = 0; i < count; ++i)
+            output[static_cast<std::size_t> (position + i)]
+                = view.getSample (0, i);
     }
 
     const int latency = processor.getLatencySamples();
@@ -162,7 +198,9 @@ double measureDelayedDryError (PolarityAudioProcessor& processor,
     return error;
 }
 
-double measureCrossfadeClick (PolarityAudioProcessor& processor, double& tailDb)
+double measureCrossfadeClick (PolarityAudioProcessor& processor,
+                              double& tailDb,
+                              AudioConfig cfg = {})
 {
     if (auto* mix = processor.getValueTreeState().getParameter ("mix"))
         mix->setValueNotifyingHost (1.0f);
@@ -170,41 +208,47 @@ double measureCrossfadeClick (PolarityAudioProcessor& processor, double& tailDb)
     if (auto* bypass = processor.getValueTreeState().getParameter ("bypass"))
         bypass->setValueNotifyingHost (0.0f);
 
+    if (auto* delta = processor.getValueTreeState().getParameter ("deltaOut"))
+        delta->setValueNotifyingHost (0.0f);
+
     processor.setCurvePoints (0, flatCurve());
     processor.setCurvePoints (1, flatCurve());
-    processor.prepareToPlay (kSampleRate, blockSize);
+    processor.prepareToPlay (cfg.sampleRate, cfg.blockSize);
 
-    juce::AudioBuffer<float> buffer (2, blockSize);
+    juce::AudioBuffer<float> buffer (2, cfg.blockSize);
     juce::MidiBuffer midi;
+    const int total = static_cast<int> (cfg.sampleRate);
     double previous = 0.0;
     double maxStep = 0.0;
     double tailSum = 0.0;
     int tailCount = 0;
     bool changed = false;
 
-    for (int position = 0; position < static_cast<int> (kSampleRate); position += blockSize)
+    for (int position = 0; position < total; position += cfg.blockSize)
     {
-        fillSine (buffer, position, 1000.0);
+        const int n = std::min (cfg.blockSize, total - position);
+        fillSine (buffer, position, n, 1000.0, cfg.sampleRate);
 
-        if (! changed && position >= static_cast<int> (kSampleRate * 0.25))
+        if (! changed && position >= static_cast<int> (cfg.sampleRate * 0.25))
         {
             processor.setCurvePoints (0, lowNullCurve());
             processor.setCurvePoints (1, lowNullCurve());
             changed = true;
         }
 
-        processor.processBlock (buffer, midi);
+        juce::AudioBuffer<float> view (buffer.getArrayOfWritePointers(), 2, n);
+        processor.processBlock (view, midi);
 
-        for (int i = 0; i < blockSize; ++i)
+        for (int i = 0; i < n; ++i)
         {
-            const double value = buffer.getSample (0, i);
+            const double value = view.getSample (0, i);
 
             if (position + i > 0)
                 maxStep = std::max (maxStep, std::abs (value - previous));
 
             previous = value;
 
-            if (position + i >= static_cast<int> (kSampleRate * 0.6))
+            if (position + i >= static_cast<int> (cfg.sampleRate * 0.6))
             {
                 tailSum += value * value;
                 ++tailCount;
@@ -335,7 +379,8 @@ struct AnalysisResult
     bool ok = false;
 };
 
-AnalysisResult testAnalysis (PolarityAudioProcessor& processor)
+AnalysisResult testAnalysis (PolarityAudioProcessor& processor,
+                             AudioConfig cfg = {})
 {
     if (auto* mix = processor.getValueTreeState().getParameter ("mix"))
         mix->setValueNotifyingHost (1.0f);
@@ -345,29 +390,32 @@ AnalysisResult testAnalysis (PolarityAudioProcessor& processor)
 
     processor.setActiveSlot (0);
     processor.setCurves (flatCurve(), flatCurve());
-    processor.prepareToPlay (kSampleRate, blockSize);
-    processor.setWaveformWindowMs (170.0f);
+    processor.prepareToPlay (cfg.sampleRate, cfg.blockSize);
+    processor.setWaveformWindowMs (200.0f);
 
-    juce::AudioBuffer<float> buffer (2, blockSize);
+    juce::AudioBuffer<float> buffer (2, cfg.blockSize);
     juce::MidiBuffer midi;
 
     const auto runSine = [&] (double seconds)
     {
-        const int total = static_cast<int> (kSampleRate * seconds);
+        const int total = static_cast<int> (cfg.sampleRate * seconds);
 
-        for (int position = 0; position < total; position += blockSize)
+        for (int position = 0; position < total; position += cfg.blockSize)
         {
-            for (int i = 0; i < blockSize; ++i)
+            const int n = std::min (cfg.blockSize, total - position);
+
+            for (int i = 0; i < n; ++i)
             {
                 const float value = 0.5f * static_cast<float> (
                     std::sin (2.0 * kPi * 1000.0
-                              * static_cast<double> (position + i) / kSampleRate));
+                              * static_cast<double> (position + i) / cfg.sampleRate));
 
                 buffer.setSample (0, i, value);
                 buffer.setSample (1, i, value);
             }
 
-            processor.processBlock (buffer, midi);
+            juce::AudioBuffer<float> view (buffer.getArrayOfWritePointers(), 2, n);
+            processor.processBlock (view, midi);
         }
     };
 
@@ -612,7 +660,7 @@ bool testQuality (PolarityAudioProcessor& processor)
 }
 
 double benchmarkProcessing (PolarityAudioProcessor& processor, double seconds,
-                            int quality = 1)
+                            int quality = 1, AudioConfig cfg = {})
 {
     if (auto* mix = processor.getValueTreeState().getParameter ("mix"))
         mix->setValueNotifyingHost (1.0f);
@@ -625,32 +673,371 @@ double benchmarkProcessing (PolarityAudioProcessor& processor, double seconds,
 
     processor.setCurves (lowNullCurve(), flatCurve());
     processor.setQuality (quality);
-    processor.prepareToPlay (kSampleRate, blockSize);
+    processor.prepareToPlay (cfg.sampleRate, cfg.blockSize);
 
     std::mt19937 rng (11);
     std::normal_distribution<float> noise (0.0f, 0.1f);
-    juce::AudioBuffer<float> source (2, blockSize);
+    juce::AudioBuffer<float> source (2, cfg.blockSize);
 
     for (int channel = 0; channel < 2; ++channel)
-        for (int i = 0; i < blockSize; ++i)
+        for (int i = 0; i < cfg.blockSize; ++i)
             source.setSample (channel, i, noise (rng));
+
+    juce::AudioBuffer<float> buffer (2, cfg.blockSize);
+    juce::MidiBuffer midi;
+    const int blocks = static_cast<int> (seconds * cfg.sampleRate / cfg.blockSize);
+    double best = 0.0;
+
+    // Best of two passes: the realtime figure is otherwise sensitive to
+    // background load on the machine running the tests.
+    for (int pass = 0; pass < 2; ++pass)
+    {
+        const double start = juce::Time::getMillisecondCounterHiRes();
+
+        for (int block = 0; block < blocks; ++block)
+        {
+            for (int channel = 0; channel < 2; ++channel)
+                buffer.copyFrom (channel, 0, source, channel, 0, cfg.blockSize);
+
+            processor.processBlock (buffer, midi);
+        }
+
+        const double elapsed = juce::Time::getMillisecondCounterHiRes() - start;
+
+        if (elapsed > 0.0)
+            best = std::max (best, (seconds * 1000.0) / elapsed);
+    }
+
+    return best;
+}
+
+void resetToBaseline (PolarityAudioProcessor& processor, AudioConfig cfg = {})
+{
+    processor.setActiveSlot (0);
+    processor.setQuality (1);
+    processor.setCurveSmoothing (2);
+
+    auto& apvts = processor.getValueTreeState();
+    const auto setValue = [&apvts] (const char* id, float value)
+    {
+        if (auto* parameter = apvts.getParameter (id))
+            parameter->setValueNotifyingHost (value);
+    };
+
+    setValue ("mix", 1.0f);
+    setValue ("bypass", 0.0f);
+    setValue ("deltaOut", 0.0f);
+
+    processor.prepareToPlay (cfg.sampleRate, cfg.blockSize);
+}
+
+bool testSampleRateMatrix (PolarityAudioProcessor& processor)
+{
+    struct RateRow
+    {
+        double rate;
+        double nullThreshold;
+        double deltaThreshold;
+    };
+
+    const RateRow rows[] = {
+        { 44100.0, -50.0, -100.0 },
+        { 48000.0, -50.0, -100.0 },
+        { 96000.0, -40.0, -100.0 },
+        { 192000.0, -30.0, -90.0 }
+    };
+
+    bool ok = true;
+
+    const auto resetRouting = [&processor]
+    {
+        auto& apvts = processor.getValueTreeState();
+
+        if (auto* p = apvts.getParameter ("mix"))
+            p->setValueNotifyingHost (1.0f);
+
+        if (auto* p = apvts.getParameter ("bypass"))
+            p->setValueNotifyingHost (0.0f);
+
+        if (auto* p = apvts.getParameter ("deltaOut"))
+            p->setValueNotifyingHost (0.0f);
+    };
+
+    for (const auto& row : rows)
+    {
+        const AudioConfig cfg { row.rate, blockSize };
+
+        resetRouting();
+        processor.setQuality (1);
+        processor.setCurveSmoothing (2);
+        processor.setActiveSlot (0);
+        processor.setCurves (wideNullCurve(), flatCurve());
+
+        const double nullDb = measureSineGainDb (processor, 1000.0, 0, cfg, 0.5);
+        const double passDb = measureSineGainDb (processor, 10000.0, 1, cfg, 0.5);
+        const int latency = processor.getLatencySamples();
+
+        if (auto* delta = processor.getValueTreeState().getParameter ("deltaOut"))
+            delta->setValueNotifyingHost (1.0f);
+
+        const double deltaDb = measureSineGainDb (processor, 1000.0, 1, cfg, 0.5);
+
+        if (auto* delta = processor.getValueTreeState().getParameter ("deltaOut"))
+            delta->setValueNotifyingHost (0.0f);
+
+        const double dryError = measureDelayedDryError (processor, 1.0f, true, cfg, 0.5);
+
+        std::printf ("rate matrix %6.0f Hz : null %6.1f dB  pass %+5.2f dB  "
+                     "delta-flat %6.1f dB  dry %.1e  lat %d\n",
+                     row.rate, nullDb, passDb, deltaDb, dryError, latency);
+
+        ok = ok && latency == 2048
+                 && nullDb < row.nullThreshold
+                 && std::abs (passDb) < 0.1
+                 && deltaDb < row.deltaThreshold
+                 && dryError < 1.0e-6;
+    }
+
+    const int blockRows[] = { 32, 512, 2048 };
+
+    for (const int bs : blockRows)
+    {
+        const AudioConfig cfg { kSampleRate, bs };
+
+        resetRouting();
+        processor.setQuality (1);
+        processor.setCurveSmoothing (2);
+        processor.setActiveSlot (0);
+        processor.setCurves (lowNullCurve(), flatCurve());
+
+        const double nullDb = measureSineGainDb (processor, 400.0, 0, cfg, 0.5);
+        const double passDb = measureSineGainDb (processor, 5000.0, 1, cfg, 0.5);
+        const double dryError = measureDelayedDryError (processor, 1.0f, true, cfg, 0.5);
+
+        std::printf ("block matrix %4d    : null %6.1f dB  pass %+5.2f dB  dry %.1e\n",
+                     bs, nullDb, passDb, dryError);
+
+        ok = ok && nullDb < -40.0
+                 && std::abs (passDb) < 0.1
+                 && dryError < 1.0e-6;
+    }
+
+    resetToBaseline (processor);
+    return ok;
+}
+
+bool testBusesLayout (PolarityAudioProcessor& processor)
+{
+    const auto mono = juce::AudioChannelSet::mono();
+    const auto stereo = juce::AudioChannelSet::stereo();
+    const auto disabled = juce::AudioChannelSet::disabled();
+    const auto surround = juce::AudioChannelSet::create5point1();
+
+    const auto makeLayout = [] (juce::AudioChannelSet in, juce::AudioChannelSet out)
+    {
+        juce::AudioProcessor::BusesLayout layout;
+        layout.inputBuses.add (in);
+        layout.outputBuses.add (out);
+        return layout;
+    };
+
+    const bool layoutsOk =
+        processor.isBusesLayoutSupported (makeLayout (mono, mono))
+        && processor.isBusesLayoutSupported (makeLayout (stereo, stereo))
+        && ! processor.isBusesLayoutSupported (makeLayout (mono, stereo))
+        && ! processor.isBusesLayoutSupported (makeLayout (stereo, mono))
+        && ! processor.isBusesLayoutSupported (makeLayout (disabled, disabled))
+        && ! processor.isBusesLayoutSupported (makeLayout (surround, surround));
+
+    PolarityAudioProcessor monoProcessor;
+    monoProcessor.setPlayConfigDetails (1, 1, static_cast<int> (kSampleRate), blockSize);
+    monoProcessor.setCurvePoints (0, lowNullCurve());
+    monoProcessor.setCurvePoints (1, flatCurve());
+
+    const double monoNull = measureSineGainDb (monoProcessor, 400.0, 0);
+    const double monoPass = measureSineGainDb (monoProcessor, 5000.0, 0);
+    const float sideDb = monoProcessor.getMeterSideDb();
+    const float correlation = monoProcessor.getMeterCorrelation();
+
+    const bool monoOk = monoNull < -40.0
+        && std::abs (monoPass) < 0.1
+        && sideDb < -60.0f
+        && correlation > 0.95f;
+
+    // Mono must produce the same left channel as stereo with the same L curve.
+    PolarityAudioProcessor stereoProcessor;
+    stereoProcessor.setPlayConfigDetails (2, 2, static_cast<int> (kSampleRate), blockSize);
+    stereoProcessor.setCurvePoints (0, lowNullCurve());
+    stereoProcessor.setCurvePoints (1, flatCurve());
+
+    monoProcessor.prepareToPlay (kSampleRate, blockSize);
+    stereoProcessor.prepareToPlay (kSampleRate, blockSize);
+
+    juce::AudioBuffer<float> monoBuffer (1, blockSize);
+    juce::AudioBuffer<float> stereoBuffer (2, blockSize);
+    juce::MidiBuffer midi;
+    double maxDifference = 0.0;
+    const int total = static_cast<int> (kSampleRate * 0.2);
+
+    for (int position = 0; position < total; position += blockSize)
+    {
+        const int n = std::min (blockSize, total - position);
+        fillSine (monoBuffer, position, n, 1000.0, kSampleRate);
+        fillSine (stereoBuffer, position, n, 1000.0, kSampleRate);
+
+        juce::AudioBuffer<float> monoView (monoBuffer.getArrayOfWritePointers(), 1, n);
+        juce::AudioBuffer<float> stereoView (stereoBuffer.getArrayOfWritePointers(), 2, n);
+
+        monoProcessor.processBlock (monoView, midi);
+        stereoProcessor.processBlock (stereoView, midi);
+
+        for (int i = 0; i < n; ++i)
+            maxDifference = std::max (
+                maxDifference,
+                std::abs (static_cast<double> (monoView.getSample (0, i))
+                          - static_cast<double> (stereoView.getSample (0, i))));
+    }
+
+    std::printf ("buses            : layouts %s  mono null %.1f dB pass %+5.2f dB  "
+                 "side %.0f  corr %.2f  parity %.1e\n",
+                 layoutsOk ? "PASS" : "FAIL", monoNull, monoPass,
+                 sideDb, correlation, maxDifference);
+
+    return layoutsOk && monoOk && maxDifference < 1.0e-6;
+}
+
+bool testLiveSettingsSwitch (PolarityAudioProcessor& processor)
+{
+    processor.setQuality (1);
+    processor.setCurveSmoothing (2);
+    processor.setActiveSlot (0);
+    processor.setCurves (flatCurve(), flatCurve());
+    processor.setActiveSlot (1);
+    processor.setCurves (lowNullCurve(), flatCurve());
+    processor.setActiveSlot (0);
+
+    auto& apvts = processor.getValueTreeState();
+    const auto setValue = [&apvts] (const char* id, float value)
+    {
+        if (auto* parameter = apvts.getParameter (id))
+            parameter->setValueNotifyingHost (value);
+    };
+
+    setValue ("mix", 1.0f);
+    setValue ("bypass", 0.0f);
+    setValue ("deltaOut", 0.0f);
+    processor.prepareToPlay (kSampleRate, blockSize);
+
+    const auto setChoice = [&] (const char* id, int index)
+    {
+        if (auto* parameter = apvts.getParameter (id))
+        {
+            parameter->beginChangeGesture();
+            parameter->setValueNotifyingHost (
+                parameter->convertTo0to1 (static_cast<float> (index)));
+            parameter->endChangeGesture();
+        }
+
+        processor.flushPendingParameterChanges();
+    };
 
     juce::AudioBuffer<float> buffer (2, blockSize);
     juce::MidiBuffer midi;
-    const int blocks = static_cast<int> (seconds * kSampleRate / blockSize);
-    const double start = juce::Time::getMillisecondCounterHiRes();
+    const int total = static_cast<int> (kSampleRate * 3.0);
 
-    for (int block = 0; block < blocks; ++block)
+    double previous = 0.0;
+    double maxStep = 0.0;
+    double peak = 0.0;
+    double tailSum = 0.0;
+    int tailCount = 0;
+    bool finite = true;
+    bool qualityHigh = false;
+    bool edgeOff = false;
+    bool slotB = false;
+    bool restored = false;
+
+    for (int position = 0; position < total; position += blockSize)
     {
-        for (int channel = 0; channel < 2; ++channel)
-            buffer.copyFrom (channel, 0, source, channel, 0, blockSize);
+        const int n = std::min (blockSize, total - position);
+        fillSine (buffer, position, n, 1000.0, kSampleRate);
+        const double time = static_cast<double> (position) / kSampleRate;
 
-        processor.processBlock (buffer, midi);
+        if (! qualityHigh && time >= 0.5)
+        {
+            setChoice ("quality", 2);
+            qualityHigh = processor.getLatencySamples() == 4096;
+        }
+
+        if (! edgeOff && time >= 1.0)
+        {
+            setChoice ("edge", 0);
+            edgeOff = processor.getCurveSmoothing() == 0;
+        }
+
+        if (! slotB && time >= 1.5)
+        {
+            setChoice ("slot", 1);
+            slotB = processor.getActiveSlot() == 1;
+        }
+
+        juce::AudioBuffer<float> view (buffer.getArrayOfWritePointers(), 2, n);
+        processor.processBlock (view, midi);
+
+        for (int i = 0; i < n; ++i)
+        {
+            const double value = view.getSample (0, i);
+            const double absolute = std::abs (value);
+
+            if (! std::isfinite (value))
+                finite = false;
+
+            peak = std::max (peak, absolute);
+
+            if (position + i > 0)
+                maxStep = std::max (maxStep, std::abs (value - previous));
+
+            previous = value;
+
+            const double sampleTime = static_cast<double> (position + i) / kSampleRate;
+
+            if (sampleTime >= 2.0 && sampleTime < 2.5)
+            {
+                tailSum += value * value;
+                ++tailCount;
+            }
+        }
+
+        if (! restored && time >= 2.5)
+        {
+            setChoice ("slot", 0);
+            setChoice ("quality", 1);
+            restored = processor.getLatencySamples() == 2048
+                    && processor.getActiveSlot() == 0;
+        }
     }
 
-    const double elapsed = juce::Time::getMillisecondCounterHiRes() - start;
+    const double tailDb = 20.0 * std::log10 (
+        std::max (std::sqrt (tailSum / std::max (1, tailCount))
+                      * std::sqrt (2.0) / 0.5,
+                  1.0e-15));
 
-    return elapsed > 0.0 ? (seconds * 1000.0) / elapsed : 0.0;
+    std::printf ("live switch      : finite %d  peak %.2f  maxstep %.3f  "
+                 "null tail %.1f dB  q %d edge %d slot %d restore %d\n",
+                 finite ? 1 : 0, peak, maxStep, tailDb,
+                 qualityHigh ? 1 : 0, edgeOff ? 1 : 0, slotB ? 1 : 0,
+                 restored ? 1 : 0);
+
+    const bool ok = finite
+        && peak <= 0.75
+        && maxStep < 0.2
+        && tailDb < -40.0
+        && qualityHigh
+        && edgeOff
+        && slotB
+        && restored;
+
+    resetToBaseline (processor);
+    return ok;
 }
 
 bool testHostParameters (PolarityAudioProcessor& processor)
@@ -707,6 +1094,15 @@ bool testHostParameters (PolarityAudioProcessor& processor)
     juce::MemoryBlock saved;
     processor.getStateInformation (saved);
 
+    bool versionOk = false;
+
+    if (auto xml = juce::AudioProcessor::getXmlFromBinary (
+            saved.getData(), static_cast<int> (saved.getSize())))
+    {
+        versionOk = xml->getIntAttribute ("stateVersion", -1)
+                    == PolarityAudioProcessor::getStateVersion();
+    }
+
     PolarityAudioProcessor restored;
     restored.setPlayConfigDetails (2, 2, static_cast<int> (kSampleRate), blockSize);
     restored.setStateInformation (saved.getData(), static_cast<int> (saved.getSize()));
@@ -717,8 +1113,59 @@ bool testHostParameters (PolarityAudioProcessor& processor)
         && restored.getCurveSmoothing() == 4
         && restored.getLatencySamples() == 4096;
 
-    // Legacy state: no slot/quality/edge PARAM children, old root quality
-    // property, and the active slot stored only in CURVES.
+    // A versioned state's PARAM children win over a stale root "quality".
+    bool conflictOk = false;
+
+    if (auto xml = juce::AudioProcessor::getXmlFromBinary (
+            saved.getData(), static_cast<int> (saved.getSize())))
+    {
+        xml->setAttribute ("quality", 0);
+
+        juce::MemoryBlock conflicting;
+        juce::AudioProcessor::copyXmlToBinary (*xml, conflicting);
+
+        PolarityAudioProcessor conflict;
+        conflict.setPlayConfigDetails (2, 2, static_cast<int> (kSampleRate), blockSize);
+        conflict.setStateInformation (conflicting.getData(),
+                                      static_cast<int> (conflicting.getSize()));
+        conflict.prepareToPlay (kSampleRate, blockSize);
+
+        conflictOk = conflict.getQuality() == 2
+                  && conflict.getLatencySamples() == 4096;
+    }
+
+    // A future schema version must load best-effort and re-save as version 1.
+    bool forwardOk = false;
+
+    if (auto xml = juce::AudioProcessor::getXmlFromBinary (
+            saved.getData(), static_cast<int> (saved.getSize())))
+    {
+        xml->setAttribute ("stateVersion", 99);
+
+        juce::MemoryBlock forward;
+        juce::AudioProcessor::copyXmlToBinary (*xml, forward);
+
+        PolarityAudioProcessor migrated;
+        migrated.setPlayConfigDetails (2, 2, static_cast<int> (kSampleRate), blockSize);
+        migrated.setStateInformation (forward.getData(),
+                                      static_cast<int> (forward.getSize()));
+        migrated.prepareToPlay (kSampleRate, blockSize);
+
+        juce::MemoryBlock resaved;
+        migrated.getStateInformation (resaved);
+
+        if (auto resavedXml = juce::AudioProcessor::getXmlFromBinary (
+                resaved.getData(), static_cast<int> (resaved.getSize())))
+        {
+            forwardOk = migrated.getActiveSlot() == 1
+                     && migrated.getQuality() == 2
+                     && resavedXml->getIntAttribute ("stateVersion", -1)
+                            == PolarityAudioProcessor::getStateVersion();
+        }
+    }
+
+    // Legacy state: no slot/quality/edge PARAM children, no schema version,
+    // old root quality property, and the slot stored only in CURVES.
     bool legacyOk = false;
 
     if (auto xml = juce::AudioProcessor::getXmlFromBinary (
@@ -733,6 +1180,7 @@ bool testHostParameters (PolarityAudioProcessor& processor)
                 xml->removeChildElement (child, true);
         }
 
+        xml->removeAttribute ("stateVersion");
         xml->setAttribute ("quality", 2);
 
         if (auto* curves = xml->getChildByName ("CURVES"))
@@ -753,12 +1201,16 @@ bool testHostParameters (PolarityAudioProcessor& processor)
             && migrated.getLatencySamples() == 4096;
     }
 
-    std::printf ("host params      : meta %s slot %s quality %s edge %s state %s legacy %s\n",
+    std::printf ("host params      : meta %s slot %s quality %s edge %s state %s "
+                 "version %s conflict %s forward %s legacy %s\n",
                  metadataOk ? "PASS" : "FAIL",
                  slotApplied ? "PASS" : "FAIL",
                  qualityApplied ? "PASS" : "FAIL",
                  edgeApplied ? "PASS" : "FAIL",
                  stateOk ? "PASS" : "FAIL",
+                 versionOk ? "PASS" : "FAIL",
+                 conflictOk ? "PASS" : "FAIL",
+                 forwardOk ? "PASS" : "FAIL",
                  legacyOk ? "PASS" : "FAIL");
 
     processor.setActiveSlot (0);
@@ -767,12 +1219,13 @@ bool testHostParameters (PolarityAudioProcessor& processor)
     processor.prepareToPlay (kSampleRate, blockSize);
 
     return metadataOk && slotApplied && qualityApplied && edgeApplied
-        && stateOk && legacyOk;
+        && stateOk && versionOk && conflictOk && forwardOk && legacyOk;
 }
 } // namespace
 
 int main()
 {
+    std::setvbuf (stdout, nullptr, _IONBF, 0);
     juce::ScopedJuceInitialiser_GUI gui;
 
     PolarityAudioProcessor processor;
@@ -809,6 +1262,9 @@ int main()
     const bool deltaOk = testDeltaMode (processor);
     const bool qualityOk = testQuality (processor);
     const bool hostParametersOk = testHostParameters (processor);
+    const bool rateMatrixOk = testSampleRateMatrix (processor);
+    const bool busesOk = testBusesLayout (processor);
+    const bool liveSwitchOk = testLiveSettingsSwitch (processor);
 
     const double benchLow = benchmarkProcessing (processor, 1.0, 0);
     const double benchNormal = benchmarkProcessing (processor, 1.0, 1);
@@ -848,6 +1304,9 @@ int main()
     std::printf ("analysis test    : %s\n", analysisOk ? "PASS" : "FAIL");
     std::printf ("quality test     : %s\n", qualityOk ? "PASS" : "FAIL");
     std::printf ("host params test : %s\n", hostParametersOk ? "PASS" : "FAIL");
+    std::printf ("rate matrix      : %s\n", rateMatrixOk ? "PASS" : "FAIL");
+    std::printf ("buses test       : %s\n", busesOk ? "PASS" : "FAIL");
+    std::printf ("live switch test : %s\n", liveSwitchOk ? "PASS" : "FAIL");
     std::printf ("benchmark        : %.1fx / %.1fx / %.1fx realtime (2048/4096/8192 taps)\n",
                  benchLow, benchNormal, benchHigh);
     std::printf ("editor smoke     : %s\n", editorOk ? "PASS" : "FAIL");
@@ -867,6 +1326,9 @@ int main()
                  && deltaOk
                  && qualityOk
                  && hostParametersOk
+                 && rateMatrixOk
+                 && busesOk
+                 && liveSwitchOk
                  && editorOk;
 
     std::printf ("PROCESSOR TEST   : %s\n", ok ? "PASS" : "FAIL");

@@ -46,9 +46,10 @@ double maxDelayedError (const std::vector<double>& y,
     return error;
 }
 
-double sineAttenuationDb (const FirKernel& kernel, double sampleRate, double freq)
+double sineAttenuationDb (const FirKernel& kernel, double sampleRate, double freq,
+                          double seconds = 0.5)
 {
-    const int count = static_cast<int> (sampleRate * 0.5);
+    const int count = static_cast<int> (sampleRate * seconds);
     std::vector<double> x (static_cast<std::size_t> (count));
 
     for (int i = 0; i < count; ++i)
@@ -133,6 +134,45 @@ int main()
     std::printf ("latency        : %d samples (%.1f ms @ %.0f Hz)\n",
                  delay, 1000.0 * static_cast<double> (delay) / sampleRate, sampleRate);
     std::printf ("resolution     : %.2f Hz\n", sampleRate / static_cast<double> (taps));
+
+    // Light cross-rate checks: flat kernels are rate independent, but this
+    // catches wiring mistakes; the wide curve keeps 192 kHz honest.
+    const CurveModel wideCurve ({ { 20.0, 0.0 },
+                                  { 100.0, 0.0 },
+                                  { 500.0, 1.0 },
+                                  { 5000.0, 1.0 },
+                                  { 10000.0, 0.0 },
+                                  { 20000.0, 0.0 } });
+
+    std::printf ("rate matrix    :\n");
+
+    for (const double rate : { 44100.0, 96000.0, 192000.0 })
+    {
+        std::vector<double> shortInput (static_cast<std::size_t> (taps + 2000));
+
+        for (auto& value : shortInput)
+            value = noise (rng);
+
+        const auto flatKernel = designFlatKernel (taps, 1.0);
+        const auto flatOutput = convolve (shortInput, flatKernel.taps);
+        const double flatError = maxDelayedError (flatOutput, shortInput, delay, 1.0);
+
+        const auto invertKernel = designFlatKernel (taps, -1.0);
+        const auto invertOutput = convolve (shortInput, invertKernel.taps);
+        const double invertError = maxDelayedError (invertOutput, shortInput, delay, -1.0);
+
+        const auto kernel = designKernel (wideCurve, rate, taps);
+        const double attenuation = sineAttenuationDb (kernel, rate, 1000.0, 0.125);
+
+        std::printf ("  %6.0f Hz   : flat %.1e  invert %.1e  null %6.1f dB  lat %.2f ms\n",
+                     rate, flatError, invertError, attenuation,
+                     1000.0 * static_cast<double> (delay) / rate);
+
+        ok = ok && flatError < 1.0e-9
+                && invertError < 1.0e-9
+                && attenuation < -40.0;
+    }
+
     std::printf ("DSP SELF-TEST  : %s\n", ok ? "PASS" : "FAIL");
 
     return ok ? 0 : 1;

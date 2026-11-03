@@ -15,6 +15,11 @@ CMakeCache.txt
 ThirdParty/
 juce-*.zip
 
+# Release output and local validation tools
+dist/
+Tools/pluginval/
+Tools/pluginval.exe
+
 # Python
 __pycache__/
 *.pyc

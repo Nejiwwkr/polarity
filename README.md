@@ -34,7 +34,8 @@ Y_c(f) = (1 − A_c(f)) · X_c(f)        A_c(f) ∈ [0, 2]
       宿主自动化在线程安全的消息线程应用中；旧工程状态自动迁移
 - [x] 离线测试：DSP 自检 + Processor 集成测试 + A/B/预设/计量/分析/质量档/宿主参数 + 编辑器 smoke 全部 PASS
 - [x] CPU 优化：SSE2 浮点卷积（分块 double 累加）、频谱 FFT 限到约 30Hz、裸指针音频循环
-- [ ] M4 剩余：采样率矩阵、pluginval、打包
+- [x] M4：44.1/48/96/192kHz 与 32/512/2048 块大小矩阵、单声道总线测试、
+      状态 schema v1、pluginval 脚本、1.0.0 打包与用户级安装
 
 当前插件默认曲线是**平直（A=0，透明）**。用 DRAW 在画布上画出反相量；ST 层会同时写入 L 和 R。
 
@@ -54,6 +55,44 @@ cmake --build Build --config Release --target Polarity_VST3 Polarity_Standalone 
 `COPY_PLUGIN_AFTER_BUILD` 目前为 `FALSE`，避免写入系统 VST3 目录需要管理员权限。在 DAW 里把插件扫描路径指向上面的 VST3 文件夹，或手动复制到用户级 `%APPDATA%\VST3`。
 
 VST3 元数据把插件声明为 **Fx + EQ** 子分类（`VST3_CATEGORIES Fx EQ`，对应 `moduleinfo.json` 的 `Sub Categories: ["Fx","EQ"]`）。FL 重新扫描插件后会读取它；如果 FL 的浏览器仍按自己的 plugin database 归类，可以在 FL 里手动移动。
+
+## 发布 1.0.0
+
+- 版本由 `CMakeLists.txt` 的 `project(Polarity VERSION 1.0.0)` 决定，VST3 的 `moduleinfo.json` 同步为 `"Version": "1.0.0"`，组件 ID 不变，旧工程/预设可继续加载。
+- 支持并已自动测试 44.1 / 48 / 96 / 192 kHz，块大小 32 / 512 / 2048，单声道与立体声。
+- 质量档延迟（样本数固定为 `taps/2`，毫秒随采样率变化）：
+
+| taps | 44.1 kHz | 48 kHz | 96 kHz | 192 kHz |
+|---|---|---|---|---|
+| 2048 | 23.2 ms | 21.3 ms | 10.7 ms | 5.3 ms |
+| 4096 | 46.4 ms | 42.7 ms | 21.3 ms | 10.7 ms |
+| 8192 | 92.9 ms | 85.3 ms | 42.7 ms | 21.3 ms |
+
+打包（生成 `dist\Polarity-1.0.0-win64\` 与 zip、打印 SHA256）：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File Tools\package_release.ps1
+```
+
+安装（默认用户级 `%APPDATA%\VST3`，无需管理员；`-System` 才装到公共 VST3 目录）：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File Tools\install_vst3.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File Tools\install_vst3.ps1 -System
+```
+
+pluginval 1.0.4（脚本会自动查找/下载 `pluginval.exe`；无桌面环境用 `-SkipGuiTests`）：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File Tools\run_pluginval.ps1
+```
+
+结果（pluginval 1.0.4，Windows 11，strictness 10，44.1/48/96/192kHz，32/512/2048 块，包含 GUI 测试）：
+
+```text
+SUCCESS — exit code 0
+JUnit: Build\pluginval\pluginval.xml
+```
 
 ## 使用
 
@@ -86,7 +125,8 @@ VST3 元数据把插件声明为 **Fx + EQ** 子分类（`VST3_CATEGORIES Fx EQ`
   - 指标选择存进插件状态（非自动化参数），工程/预设恢复时保留。
   - 频谱与波形使用 L/R 单声道和；左右差异大时结合右侧 M/S 表判断。
 - **PRESET**：顶部输入名字后点 SAVE；下拉选择即加载。预设保存在
-  `%APPDATA%\Polarity\Presets`（XML），包含 A/B 两套曲线、当前槽、mix/bypass。
+  `%APPDATA%\Polarity\Presets`（XML），保存的是完整插件状态：A/B 两套曲线、当前槽、
+  mix / bypass / deltaOut、quality、edge 以及波形指标等。
 - 曲线随工程/预设保存；宿主恢复状态时编辑器自动刷新。
 - 拖动曲线时后台实时重建 FIR，引擎用 60ms 交叉淡化换核，不会爆音。
 
@@ -145,6 +185,10 @@ DSP:
   band null      : 400Hz -82.2dB / 800Hz -83.2dB / 1200Hz -84.6dB / 1600Hz -86.7dB
   latency        : 2048 samples (42.7 ms)
   resolution     : 11.72 Hz
+  rate matrix    :
+     44100 Hz   : flat 0.0e+00  invert 0.0e+00  null  -95.8 dB  lat 46.44 ms
+     96000 Hz   : flat 0.0e+00  invert 0.0e+00  null  -86.1 dB  lat 21.33 ms
+    192000 Hz   : flat 0.0e+00  invert 0.0e+00  null  -93.9 dB  lat 10.67 ms
 
 Processor:
   latency          : 2048 samples
@@ -159,7 +203,7 @@ Processor:
   preset roundtrip : PASS        (临时目录保存/加载往返)
   meters corr/anti : +1.00 / -1.00  (side -72.0 / mid -72.0 dB)
   meters test      : PASS
-  analysis f/n     : -18.3/-18.3 -> -18.0/-114.5 dB  wave 0.0000
+  analysis f/n     : -18.3/-18.3 -> -18.0/-114.4 dB  wave 0.0000
   analysis test    : PASS        (1kHz 正弦：输入/输出频谱、NULL 后输出与波形)
   delta normal L/R : -96.2 / -0.0 dB
   delta L/R        : -0.0 / -300.0 dB
@@ -167,11 +211,24 @@ Processor:
   delta test       : PASS
   quality 2048     : lat 1024  null -85.1 dB  dry 0.0e+00
   quality 4096     : lat 2048  null -96.2 dB  dry 0.0e+00
-  quality 8192     : lat 4096  null -138.3 dB  dry 0.0e+00
+  quality 8192     : lat 4096  null -138.2 dB  dry 0.0e+00
   quality test     : PASS        (三档延迟、null、旁通延迟对齐、状态保存)
-  benchmark        : 18.5x / 12.7x / 7.7x realtime (2048/4096/8192 taps)
-  host params      : meta PASS slot PASS quality PASS edge PASS state PASS legacy PASS
+  host params      : meta PASS slot PASS quality PASS edge PASS state PASS
+                     version PASS conflict PASS forward PASS legacy PASS
   host params test : PASS        (参数元数据、宿主自动化、状态往返、旧状态迁移)
+  rate matrix  44100 Hz : null -125.5 dB  pass +0.00 dB  delta-flat -300.0 dB  dry 0.0e+00  lat 2048
+  rate matrix  48000 Hz : null -111.4 dB  pass -0.00 dB  delta-flat -300.0 dB  dry 0.0e+00  lat 2048
+  rate matrix  96000 Hz : null -100.1 dB  pass -0.00 dB  delta-flat -300.0 dB  dry 0.0e+00  lat 2048
+  rate matrix 192000 Hz : null -108.3 dB  pass +0.00 dB  delta-flat -300.0 dB  dry 0.0e+00  lat 2048
+  block matrix   32    : null  -96.2 dB  pass -0.00 dB  dry 0.0e+00
+  block matrix  512    : null  -96.2 dB  pass -0.00 dB  dry 0.0e+00
+  block matrix 2048    : null  -96.2 dB  pass -0.00 dB  dry 0.0e+00
+  buses            : layouts PASS  mono null -96.2 dB pass -0.00 dB  side -72  corr 1.00  parity 0.0e+00
+  live switch      : finite 1  peak 0.50  maxstep 0.065  null tail -136.9 dB  q 1 edge 1 slot 1 restore 1
+  rate matrix      : PASS
+  buses test       : PASS
+  live switch test : PASS
+  benchmark        : 12-19x / 8-13x / 5-8x realtime (2048/4096/8192 taps, load dependent)
   editor smoke     : PASS        (构造浅色主题 UI)
   PROCESSOR TEST   : PASS
 ```
@@ -180,7 +237,8 @@ Processor:
 
 `Demo/` 下是参考实现生成的 8 秒对数扫频素材（`*-dry.wav` 为干声）：
 
-- `st-null.wav`：200Hz–2kHz 完全抵消（与当前插件的固定曲线一致）
+- `st-null.wav`：200Hz–2kHz 完全抵消（示例由参考实现生成；插件默认是平直曲线，
+  需自行绘制相同形状后再对比）
 - `split.wav`：L 抵消 200–800Hz、R 抵消 3–8kHz
 - `shelf-invert.wav`：200–800Hz 极性反转（A=2）
 - `identity.wav`：A=0，完全透明
@@ -197,13 +255,13 @@ python Tools/reference_render.py --self-test
 - **零相位 FIR**：在 N/2+1 个频点采样 `H=1−A`，补共轭对称谱，IFFT 后循环右移 N/2。延迟 `N/2` 样本，频率分辨率 `fs/N`。
 - **不加窗**：加窗会破坏 `A=0`/`A=2` 的精确性。频域采样的 Dirichlet 插值纹波是固有代价，用 taps 和曲线平滑度管理。
 - **质量档 2048 / 4096 / 8192 taps**（默认 4096）：48kHz 下延迟 21.3 / 42.7 / 85.3 ms，分辨率 23.4 / 11.7 / 5.9 Hz。引擎始终按 8192 分配环形缓冲与核槽，切换只改活动核长度和 `setLatencySamples`，音频线程无分配。
-- **卷积优化**：核与历史改为 float，内层用 SSE2 4-wide 点积（`_mm_loadu_ps`），每 256 个抽头把 float 部分和汇入 double，兼顾速度与空域精度（8192 taps 实测 null −138 dB）。48kHz/512 块下 4096 taps 约 12.7× 实时（单核），8192 taps 约 7.7×。
+- **卷积优化**：核与历史改为 float，内层用 SSE2 4-wide 点积（`_mm_loadu_ps`），每 256 个抽头把 float 部分和汇入 double，兼顾速度与空域精度（8192 taps 实测 null −138 dB）。48kHz/512 块下 4096 taps 约 8–13× 实时（单核，随机器负载变化），8192 taps 约 5–8×。
 - **分析优化**：频谱 FFT（16384 点 ×2）从每块计算改为约 30Hz 更新一次（按采样率/块大小自适应），时间平滑系数按实际更新间隔换算；波形仍每 4 块更新。
 - **曲线模型**：控制点 + PCHIP（log 频率），20Hz/20kHz 端点固定为 0。
 - **宿主参数**：`mix`、`bypass`、`deltaOut`、`slot`、`quality`、`edge` 都是 APVTS 参数，带可读名称、数值文本与 gesture；`quality` 改变 PDC，标记为不可自动化。
 - **宿主状态**：曲线仍整体存插件状态（`CURVES`），A/B 槽通过 `slot` 参数同步；曲线编辑不进宿主撤销历史。
 
-完整方案见：`C:\Users\lenovo\.claude\plans\vst-left-stereo-right-eq-mid-side-mid-s-shimmering-deer.md`。
+版本变更记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 工程结构
 
