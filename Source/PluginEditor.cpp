@@ -407,6 +407,39 @@ PolarityAudioProcessorEditor::PolarityAudioProcessorEditor (PolarityAudioProcess
         qualityAttachment = std::make_unique<juce::ComboBoxParameterAttachment> (
             *parameter, qualityBox);
 
+    mixSlider.setTooltip ("Mix - dry/wet blend");
+    bypassToggle.setTooltip ("Bypass processing (latency is preserved)");
+    normButton.setTooltip ("Normal processed output");
+    deltaButton.setTooltip ("Monitor input - output: what the curves removed or inverted");
+    slotAButton.setTooltip ("Curve slot A");
+    slotBButton.setTooltip ("Curve slot B");
+    layerLeft.setTooltip ("Edit the left channel only");
+    layerStereo.setTooltip ("Edit both channels together");
+    layerRight.setTooltip ("Edit the right channel only");
+    toolDraw.setTooltip ("Draw the inverted-amount curve");
+    toolNode.setTooltip ("Drag points; double-click to add, right-click to delete");
+    toolErase.setTooltip ("Erase the curve back to 0");
+    undoButton.setTooltip ("Undo curve edit");
+    redoButton.setTooltip ("Redo curve edit");
+    spectrumButton.setTooltip ("Show input/output spectrum");
+    polarityButton.setTooltip ("Show inversion-amount heatmap");
+    slopeCaption.setTooltip ("Spectrum analyzer slope");
+    slopeBox.setTooltip ("Spectrum analyzer slope");
+    smoothCaption.setTooltip ("Spectrum smoothing width");
+    smoothBox.setTooltip ("Spectrum smoothing width");
+    timeCaption.setTooltip ("Spectrum release time");
+    timeBox.setTooltip ("Spectrum release time");
+    waveCaption.setTooltip ("Waveform time window");
+    waveSpeedBox.setTooltip ("Waveform time window");
+    metricCaption.setTooltip ("Waveform envelope: RMS or peak");
+    metricBox.setTooltip ("Waveform envelope: RMS or peak");
+    qualityCaption.setTooltip ("FIR length - finer resolution, more latency");
+    qualityBox.setTooltip ("FIR length - finer resolution, more latency");
+    edgeCaption.setTooltip ("Soften curve edges in the FIR design");
+    edgeBox.setTooltip ("Soften curve edges in the FIR design");
+    presetBox.setTooltip ("Load a preset");
+    savePresetButton.setTooltip ("Save the current curves as a preset");
+
     updateButtons();
     startTimerHz (15);
 }

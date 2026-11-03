@@ -22,6 +22,7 @@ class PolarityAudioProcessor;
     the message thread and the audio engine crossfades to them.
 */
 class CurveEditor final : public juce::Component,
+                          public juce::SettableTooltipClient,
                           private juce::ChangeListener,
                           private juce::Timer
 {

@@ -34,6 +34,7 @@ juce::Rectangle<float> innerPanelArea (juce::Rectangle<float> local)
 WaveformPanel::WaveformPanel (PolarityAudioProcessor& processor)
     : processorRef (processor)
 {
+    setTooltip ("Click to freeze the waveform; click again to resume");
     setInterceptsMouseClicks (true, true);
     setMouseCursor (juce::MouseCursor::PointingHandCursor);
     startTimerHz (30);

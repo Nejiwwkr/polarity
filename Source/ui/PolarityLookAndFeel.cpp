@@ -203,3 +203,27 @@ void PolarityLookAndFeel::drawPopupMenuBackground (juce::Graphics& g,
 {
     g.fillAll (paperBright);
 }
+
+void PolarityLookAndFeel::drawTooltip (juce::Graphics& g,
+                                       const juce::String& tooltipText,
+                                       int width,
+                                       int height)
+{
+    const juce::Rectangle<float> bounds (0.0f, 0.0f,
+                                         static_cast<float> (width),
+                                         static_cast<float> (height));
+
+    juce::DropShadow (juce::Colour (0x16000000), 6, { 0, 2 })
+        .drawForRectangle (g, bounds.toNearestInt());
+
+    g.setColour (paperBright);
+    g.fillRoundedRectangle (bounds.reduced (0.5f), 6.0f);
+
+    g.setColour (border);
+    g.drawRoundedRectangle (bounds.reduced (0.5f), 6.0f, 1.0f);
+
+    g.setColour (ink);
+    g.setFont (flatFont (polarity::type::control));
+    g.drawFittedText (tooltipText, bounds.reduced (8.0f, 4.0f).toNearestInt(),
+                      juce::Justification::centredLeft, 3);
+}

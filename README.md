@@ -103,6 +103,7 @@ FL 的“编辑参数”、自动化和提示面板只认真正的 VST 参数。
 - 所有参数都带 VST3 的 title / value text / units，FL 参数列表与提示面板显示的是这些文本。
 - NORM/DELTA、A/B、QUALITY、EDGE 的控件用 `ParameterAttachment` / `ComboBoxParameterAttachment` 驱动，选择时自动发送 `beginEdit → performEdit → endEdit`，因此 FL 的撤销/重做能覆盖这些编辑；MIX/BYPASS 由 JUCE attachment 处理。
 - 宿主在音频线程改参数时，处理器只写原子 pending 值并 `triggerAsyncUpdate()`；真正的换核、`setLatencySamples` 和状态写入都在消息线程完成，连续自动化会被合并。
+- **插件内悬停提示**：鼠标在任意控件（含曲线、波形、M/S 面板）停留约 500ms，会弹出与纸感主题一致的 tooltip，说明该控件的作用。宿主提示栏仍只在“触碰/编辑参数”时提示，因为 VST3 没有 hover 接口；tooltip 不参与自动化、撤销或状态保存。
 - **限制**：自由绘制的曲线、SPECTRUM/POLARITY、SLOPE/SMOOTH/TIME、WAVE/METRIC 不是宿主参数，因此不会出现在 FL 的自动化/提示面板里，曲线仍用插件内 UNDO/REDO。这是 VST3 没有通用“内部状态撤销/提示”通道导致的。
 - QUALITY 在 FL 中可能显示为不可自动化；手动修改会改变延迟，宿主可能重新同步播放位置。旧工程加载时会把原来的 `quality` 状态属性与 `CURVES.active` 迁移到新参数。
 

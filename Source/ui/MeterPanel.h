@@ -5,6 +5,7 @@
 class PolarityAudioProcessor;
 
 class MeterPanel final : public juce::Component,
+                         public juce::SettableTooltipClient,
                          private juce::Timer
 {
 public:

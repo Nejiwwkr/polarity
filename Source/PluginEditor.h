@@ -30,6 +30,7 @@ private:
 
     PolarityAudioProcessor& processorRef;
     PolarityLookAndFeel lookAndFeel;
+    juce::TooltipWindow tooltipWindow { this, 500 };
 
     juce::Label titleLabel;
     juce::Label subtitleLabel;

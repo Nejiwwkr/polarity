@@ -9,7 +9,8 @@
 MeterPanel::MeterPanel (PolarityAudioProcessor& processor)
     : processorRef (processor)
 {
-    setInterceptsMouseClicks (false, false);
+    setTooltip ("Mid/Side level and L/R correlation");
+    setInterceptsMouseClicks (true, false);
     startTimerHz (30);
 }
 

@@ -8,6 +8,7 @@ class PolarityAudioProcessor;
 
 /** Input/output waveform comparison with selectable RMS / Peak metric. */
 class WaveformPanel final : public juce::Component,
+                            public juce::SettableTooltipClient,
                             private juce::Timer
 {
 public:

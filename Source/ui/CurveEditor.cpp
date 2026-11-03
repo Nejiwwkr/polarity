@@ -30,6 +30,7 @@ const juce::Colour kSpecOutput = polarity::theme::teal;
 CurveEditor::CurveEditor (PolarityAudioProcessor& processor)
     : processorRef (processor)
 {
+    setTooltip ("Inverted amount: 0 = unchanged, 1 = null, 2 = polarity invert");
     setTool (Tool::Draw);
     setLayer (Layer::Stereo);
     processorRef.getCurveBroadcaster().addChangeListener (this);
