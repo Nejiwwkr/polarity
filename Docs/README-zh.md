@@ -17,7 +17,7 @@ Y_c(f) = (1 − A_c(f)) · X_c(f)        A_c(f) ∈ [0, 2]
 | 1–2 | 开始反向 | 1−A（负） |
 | 2 | 该频段完全极性反转（INVERT） | −1 |
 
-与普通 EQ 的区别：普通 EQ 的 cut 是最小相位滤波，cut 后的信号与原信号相加不会抵消；这里用零相位 FIR 实现 `1−A` 的幅度加权，`A=1` 是真正的频带 null，`A=2` 是真正的极性反转。L/ST/R 底层只存 `A_L`、`A_R` 两条曲线；编辑 ST 时同时写入两侧。不提供 Mid/Side 编辑层，但会显示 M/S 电平与相关度作为警告（单侧反相会把能量推入 Side）。
+与普通 EQ 的区别：普通 EQ 的 cut 是最小相位滤波，cut 后的信号与原信号相加不会抵消；这里用零相位 FIR 实现 `1−A` 的幅度加权，`A=1` 是真正的频带 null，`A=2` 是真正的极性反转。L/ST/R 底层只存两条曲线；编辑 ST 时同时写入两侧。路由为 **L/R** 时两条曲线分别作用于左右声道；路由为 **M/S** 时两条曲线分别作用于 Mid `(L+R)/2` 与 Side `(L−R)/2`，编辑层标签变为 M/ST/S。两条 M/S 曲线不同时才能得到真正的 mid/side 处理（例如 120 Hz 以下侧信号 A=1 → 低频单声道）；两条曲线完全相同时，M/S 在数学上等价于 L/R。
 
 ## 当前进度
 
@@ -32,13 +32,15 @@ Y_c(f) = (1 − A_c(f)) · X_c(f)        A_c(f) ∈ [0, 2]
 - [x] 波形对比：输入/输出填充、RMS dB 包络、冻结、5 档时间窗口
 - [x] 浅色纸感主题：暖纸底 + 墨色 + 朱红强调；自定义扁平 LookAndFeel
 - [x] 输出 NORM / DELTA 双模式；波形 RMS / PEAK 指标可选
-- [x] 质量档：2048 / 4096 / 8192 taps（切换延迟与频率分辨率，不重新分配内存）
+- [x] 质量档：1024 / 2048 / 4096 / 8192 taps（切换延迟与频率分辨率，不重新分配内存）
+- [x] 零附加延迟分区 FFT 卷积（64 样本 hop、双精度），替代直接卷积；CPU 降低约一个数量级
+- [x] L/R ↔ M/S 路由与 M/S 曲线编辑；切换时 30ms 淡出 + 重填历史 + 30ms 淡入
 - [x] 宿主集成：A/B、QUALITY、EDGE 成为 VST 参数；完整参数文本/单位/gesture；
       宿主自动化在线程安全的消息线程应用中；旧工程状态自动迁移
 - [x] 离线测试：DSP 自检 + Processor 集成测试 + A/B/预设/计量/分析/质量档/宿主参数 + 编辑器 smoke 全部 PASS
-- [x] CPU 优化：SSE2 浮点卷积（分块 double 累加）、频谱 FFT 限到约 30Hz、裸指针音频循环
+- [x] CPU 优化：分区 FFT 卷积、频谱/波形分析限到约 30Hz 且仅在编辑器打开时运行
 - [x] M4：44.1/48/96/192kHz 与 32/512/2048 块大小矩阵、单声道总线测试、
-      状态 schema v1、pluginval 脚本、1.0.0 打包与用户级安装
+      状态 schema v2（quality 索引迁移）、pluginval 脚本、1.0.0 打包与用户级安装
 
 当前插件默认曲线是**平直（A=0，透明）**。用 DRAW 在画布上画出反相量；ST 层会同时写入 L 和 R。
 
@@ -61,14 +63,15 @@ VST3 元数据把插件声明为 **Fx + EQ** 子分类（`VST3_CATEGORIES Fx EQ`
 
 ## 发布 1.0.0
 
-> 当前 master 为 **1.0.1（未发布）**，包含 1.0.0 之后的性能/延迟优化；1.0.1 的变更见 [CHANGELOG.md](../CHANGELOG.md)。以下为已发布的 1.0.0 信息。
+> 当前 master 为 **1.1.0（未发布）**，包含分区 FFT 卷积、1024 档与 M/S 路由；变更见 [CHANGELOG.md](../CHANGELOG.md)。以下延迟与版本信息已按 1.1.0 更新。
 
-- 版本由 `CMakeLists.txt` 的 `project(Polarity VERSION 1.0.0)` 决定，VST3 的 `moduleinfo.json` 同步为 `"Version": "1.0.0"`，组件 ID 不变，旧工程/预设可继续加载。
+- 版本由 `CMakeLists.txt` 的 `project(Polarity VERSION 1.1.0)` 决定，VST3 的 `moduleinfo.json` 同步，组件 ID 不变，旧工程/预设可继续加载。
 - 支持并已自动测试 44.1 / 48 / 96 / 192 kHz，块大小 32 / 512 / 2048，单声道与立体声。
 - 质量档延迟（样本数固定为 `taps/2`，毫秒随采样率变化）：
 
 | taps | 44.1 kHz | 48 kHz | 96 kHz | 192 kHz |
 |---|---|---|---|---|
+| 1024 | 11.6 ms | 10.7 ms | 5.3 ms | 2.7 ms |
 | 2048 | 23.2 ms | 21.3 ms | 10.7 ms | 5.3 ms |
 | 4096 | 46.4 ms | 42.7 ms | 21.3 ms | 10.7 ms |
 | 8192 | 92.9 ms | 85.3 ms | 42.7 ms | 21.3 ms |
@@ -104,10 +107,11 @@ JUnit: Build\pluginval\pluginval.xml
 - 默认曲线平直，插件透明。
 - **DRAW**：按住拖动，在光标频率直接写入反相量。
 - **EDGE**（底栏 FIR 组，与 QUALITY 同组）：Off / 1 bin / 2 bins / 4 bins（默认 2 bins）。在 FIR 设计时对 H(f) 过渡做频域平滑，缓解陡峭曲线边界的振铃/预回声；A=0/A=2 的平坦区域仍然精确。
-- **QUALITY**（底栏 FIR 组）：2048 / 4096 / 8192 taps，选项文本显示当前采样率下的实际延迟（48kHz 时约 21.3 / 42.7 / 85.3 ms）。taps 越大，频率分辨率越高、深 null 越容易做出来，但 PDC 延迟越大；切换时插件会上报新的延迟，宿主可能重新同步播放位置。默认 4096。
+- **QUALITY**（底栏 FIR 组）：1024 / 2048 / 4096 / 8192 taps，选项文本显示当前采样率下的实际延迟（48kHz 时约 10.7 / 21.3 / 42.7 / 85.3 ms）。taps 越大，频率分辨率越高、深 null 越容易做出来，但 PDC 延迟越大；切换时插件会上报新的延迟，宿主可能重新同步播放位置。默认 4096。
 - **NODE**：拖动控制点；双击空白加点；右键点击控制点删除。
 - **ERASE**：在局部把曲线擦回 0。
 - **L / ST / R**：L 只编辑左通道，R 只编辑右通道，ST 同时写入两侧。
+- **LR / MS**（底栏）：选择处理路由。LR 时两条曲线作用于左右声道；MS 时编码成 Mid/Side 后分别滤波再解码，编辑层标签变为 **M / ST / S**。切换路由时输出先 30ms 淡出、重填引擎历史、再 30ms 淡入（约 60ms 电平凹陷，避免旧历史与新输入混合的瞬态）；路由是结构性参数，不参与宿主自动化。
 - y 轴：0 = 原样，1 = NULL（完全抵消），2 = INVERT（极性反转）；x 轴 20Hz–20kHz。
 - UNDO / REDO 撤销重做；MIX 干湿；BYPASS 保持延迟对齐。
 - **A / B**：两套独立曲线槽，用与 L/ST/R 相同的分段按钮切换；两套曲线都随工程保存。
@@ -145,15 +149,17 @@ FL 的“编辑参数”、自动化和提示面板只认真正的 VST 参数。
 | Bypass | `On` / `Off` | 是 |
 | Delta Out | `NORM` / `DELTA` | 是 |
 | A/B Slot | `A` / `B` | 是 |
-| Quality | `2048 taps` / `4096 taps` / `8192 taps` | **否**（改变 PDC） |
+| Quality | `1024 taps` / `2048 taps` / `4096 taps` / `8192 taps` | **否**（改变 PDC） |
 | Edge Smoothing | `Off` / `1 bin` / `2 bins` / `4 bins` | 是 |
+| Routing | `L/R` / `M/S` | **否**（结构性路由） |
 
 - 所有参数都带 VST3 的 title / value text / units，FL 参数列表与提示面板显示的是这些文本。
 - NORM/DELTA、A/B、QUALITY、EDGE 的控件用 `ParameterAttachment` / `ComboBoxParameterAttachment` 驱动，选择时自动发送 `beginEdit → performEdit → endEdit`，因此 FL 的撤销/重做能覆盖这些编辑；MIX/BYPASS 由 JUCE attachment 处理。
 - 宿主在音频线程改参数时，处理器只写原子 pending 值并 `triggerAsyncUpdate()`；真正的换核、`setLatencySamples` 和状态写入都在消息线程完成，连续自动化会被合并。
 - **插件内悬停提示**：鼠标在任意控件（含曲线、波形、M/S 面板）停留约 500ms，会弹出与纸感主题一致的 tooltip，说明该控件的作用。宿主提示栏仍只在“触碰/编辑参数”时提示，因为 VST3 没有 hover 接口；tooltip 不参与自动化、撤销或状态保存。
 - **限制**：自由绘制的曲线、SPECTRUM/POLARITY、SLOPE/SMOOTH/TIME、WAVE/METRIC 不是宿主参数，因此不会出现在 FL 的自动化/提示面板里，曲线仍用插件内 UNDO/REDO。这是 VST3 没有通用“内部状态撤销/提示”通道导致的。
-- QUALITY 在 FL 中可能显示为不可自动化；手动修改会改变延迟，宿主可能重新同步播放位置。旧工程加载时会把原来的 `quality` 状态属性与 `CURVES.active` 迁移到新参数。
+- QUALITY 在 FL 中可能显示为不可自动化；手动修改会改变延迟，宿主可能重新同步播放位置。旧工程加载时会把原来的 `quality` 状态属性与 `CURVES.active` 迁移到新参数；schema v2 还会把旧的三档 quality 索引整体 +1，使 2048/4096/8192 保持不变。
+- ROUTING 不参与自动化；切换有约 60ms 电平凹陷，但不会爆音。
 
 ## 界面
 
@@ -214,10 +220,11 @@ Processor:
   delta L/R        : -0.0 / -300.0 dB
   delta A=2 L      : 6.0 dB
   delta test       : PASS
+  quality 1024     : lat 512   null -68.0 dB  dry 0.0e+00
   quality 2048     : lat 1024  null -85.1 dB  dry 0.0e+00
   quality 4096     : lat 2048  null -96.2 dB  dry 0.0e+00
-  quality 8192     : lat 4096  null -138.2 dB  dry 0.0e+00
-  quality test     : PASS        (三档延迟、null、旁通延迟对齐、状态保存)
+  quality 8192     : lat 4096  null -149.7 dB  dry 0.0e+00
+  quality test     : PASS        (四档延迟、null、旁通延迟对齐、状态保存)
   host params      : meta PASS slot PASS quality PASS edge PASS state PASS
                      version PASS conflict PASS forward PASS legacy PASS
   host params test : PASS        (参数元数据、宿主自动化、状态往返、旧状态迁移)
@@ -236,9 +243,16 @@ Processor:
   analysis gating  : PASS        (编辑器关闭时分析保持复位，打开后恢复)
   bypass restore   : PASS        (旁路期间历史保持，恢复后无长瞬态)
   meter ballistics : PASS        (32/512 块电平差异 0.04 dB)
-  benchmark open   : 20-26x / 14-16x / 8-10x realtime (2048/4096/8192 taps)
-  benchmark closed : ~22x realtime (4096 taps, no editor)
-  benchmark bypass : ~48x realtime (4096 taps)
+  fft vs direct    : max ~3e-7   (1024/2048/4096/8192 taps，块长 1..2048 混合)
+  prime history    : max 1.8e-7  (任意 hop 相位重填历史)
+  M/S identity     : max 6.0e-8  (两条曲线相同时 M/S == L/R)
+  M/S mono bass    : side -77.5 dB  mid -0.0 dB
+  M/S switch       : maxstep 0.0653  (与正弦自身斜率一致，无爆音)
+  M/S routing      : PASS
+  benchmark open   : ~35x / ~33x / ~29x / ~28x realtime (1024/2048/4096/8192 taps)
+  benchmark closed : ~100x realtime (4096 taps, no editor)
+  benchmark closed : ~70x realtime (8192 taps, no editor)
+  benchmark bypass : ~47x realtime (4096 taps)
   editor smoke     : PASS        (构造浅色主题 UI)
   PROCESSOR TEST   : PASS
 ```
@@ -264,13 +278,15 @@ python Tools/reference_render.py --self-test
 
 - **零相位 FIR**：在 N/2+1 个频点采样 `H=1−A`，补共轭对称谱，IFFT 后循环右移 N/2。延迟 `N/2` 样本，频率分辨率 `fs/N`。
 - **不加窗**：加窗会破坏 `A=0`/`A=2` 的精确性。频域采样的 Dirichlet 插值纹波是固有代价，用 taps 和曲线平滑度管理。
-- **质量档 2048 / 4096 / 8192 taps**（默认 4096）：48kHz 下延迟 21.3 / 42.7 / 85.3 ms，分辨率 23.4 / 11.7 / 5.9 Hz。引擎始终按 8192 分配环形缓冲与核槽，切换只改活动核长度和 `setLatencySamples`，音频线程无分配。
-- **卷积优化**：核与历史改为 float，内层用 SSE2 4-wide 点积（`_mm_loadu_ps`），每 256 个抽头把 float 部分和汇入 double，兼顾速度与空域精度（8192 taps 实测 null −138 dB）。48kHz/512 块下 4096 taps 约 14–16× 实时（单核，编辑器打开、含分析），8192 taps 约 8–10×；编辑器关闭约 22×，旁路约 48×。
+- **质量档 1024 / 2048 / 4096 / 8192 taps**（默认 4096）：48kHz 下延迟 10.7 / 21.3 / 42.7 / 85.3 ms，分辨率 46.9 / 23.4 / 11.7 / 5.9 Hz。引擎始终按 8192 分配缓冲与核槽，切换只改活动核长度和 `setLatencySamples`，音频线程无分配。
+- **零附加延迟分区 FFT 卷积**（`PartitionedConvolver`）：64 样本 hop、128 点双精度 FFT；核拆成 64 抽头的直接 head + 从 64 抽头开始的均匀分区 tail。输出块 m 的 tail 只依赖输入块 m−1 及更早，因此在块边界即可算出并与逐样本 head 相加，不引入额外延迟（`getLatencySamples()` 仍为 `taps/2`）。输入频谱环形队列跨核槽共享，换核直接从现有队列重算；旁路时只推进队列、跳过 MAC/IFFT；60ms 输出交叉淡化。差分测试对直接卷积逐样本误差约 3e-7；8192 taps 在 48kHz/512 块下约 70× 实时（编辑器关闭），4096 taps 约 100×，比 1.0.x 的直接卷积快约一个数量级，零点深度不退化（8192 taps 实测 null −150 dB）。
+- **直接卷积保留**为测试参考实现（`InversionEngine`），不再进入插件信号链。
+- **M/S 路由**：编码 `M=(L+R)/2, S=(L−R)/2`，引擎照常用两条曲线滤波，再解码 `L'=M'+S', R'=M'−S'`。切换时 30ms 淡出、用原始 L/R 历史重算编码后的频域历史（`primeHistory`）、30ms 淡入。两条曲线相同时数学上等价于 L/R。
 - **分析优化**：频谱 FFT（16384 点 ×2）与波形均约 30Hz 更新（按采样率/块大小自适应，块较大时以块率为上限），时间平滑系数按实际更新间隔换算；频带 bin/权重在 `prepareToPlay` 预计算。
 - **空闲与旁路优化**：只有编辑器打开时才做频谱/波形/M-S 分析，关闭窗口或离线渲染时为零分析开销；BYPASS 与 MIX=0 跳过湿声卷积但继续推进 FIR 历史，恢复时无陈旧历史瞬态。
 - **延迟过渡**：切换 QUALITY 时 dry 延迟长度与 wet 核淡变同步交叉淡化（60ms），避免淡变期间干湿错位。
 - **曲线模型**：控制点 + PCHIP（log 频率），20Hz/20kHz 端点固定为 0。
-- **宿主参数**：`mix`、`bypass`、`deltaOut`、`slot`、`quality`、`edge` 都是 APVTS 参数，带可读名称、数值文本与 gesture；`quality` 改变 PDC，标记为不可自动化。
+- **宿主参数**：`mix`、`bypass`、`deltaOut`、`slot`、`quality`、`edge`、`routing` 都是 APVTS 参数，带可读名称、数值文本与 gesture；`quality` 改变 PDC、`routing` 是结构性路由，二者标记为不可自动化。
 - **宿主状态**：曲线仍整体存插件状态（`CURVES`），A/B 槽通过 `slot` 参数同步；曲线编辑不进宿主撤销历史。
 
 版本变更记录见 [CHANGELOG.md](../CHANGELOG.md)。
@@ -295,7 +311,8 @@ Source/
     CurveModel.h/.cpp           # PCHIP 曲线
     Fft.h/.cpp                  # radix-2 FFT
     FirDesigner.h/.cpp          # 频域采样 -> 线性相位 FIR
-    InversionEngine.h/.cpp      # 每通道 FIR + 4 缓冲换核 + 交叉淡化
+    PartitionedConvolver.h/.cpp # 零附加延迟分区 FFT 卷积（主路径）
+    InversionEngine.h/.cpp      # 直接卷积，保留为测试参考实现
 Tests/
   dsp_tests.cpp                 # 纯 DSP 自检
   processor_tests.cpp           # AudioProcessor 集成测试

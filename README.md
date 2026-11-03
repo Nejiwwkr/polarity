@@ -16,7 +16,8 @@ Draw separate curves for the left and right channels, or link them together with
 
 - **L / ST / R curve editing** with draw, node and erase tools.
 - **Zero-phase FIR processing** with host PDC; what you draw is what you hear.
-- **Three quality tiers** — 2048 / 4096 / 8192 taps — trading latency for frequency resolution and null depth.
+- **Four quality tiers** — 1024 / 2048 / 4096 / 8192 taps — trading latency for frequency resolution and null depth.
+- **L/R and M/S routing** — draw the curves in stereo or in mid/side, so you can do things like make the low end mono or remove centred content with a true zero.
 - **A/B curve slots** for fast comparisons, plus file presets.
 - **NORM / DELTA monitoring** — DELTA plays exactly what the curves removed, so you can hear the inverted content in isolation.
 - **Spectrum and inversion heatmap** overlaid on the curve, with adjustable slope, smoothing and release time.
@@ -28,7 +29,7 @@ Draw separate curves for the left and right channels, or link them together with
 
 ## Download & install
 
-The latest tagged release is **v1.0.0**. The `master` branch also contains a 1.0.1 performance pass that is not tagged yet.
+The latest tagged release is **v1.0.0**. The `master` branch also contains the **1.1.0** engine upgrade (partitioned FFT convolution, 1024-tap tier, M/S routing) that is not tagged yet.
 
 1. Download `Polarity-<version>-win64.zip` from the [Releases page](https://github.com/Nejiwwkr/polarity/releases).
 2. Extract it anywhere.
@@ -53,7 +54,7 @@ You can also copy `VST3\Polarity.vst3` into `%APPDATA%\VST3` manually. Do not ke
    - drag up to `2` for a full polarity flip;
    - leave at `0` to keep the band untouched.
 4. Switch to **DELTA** to hear only the removed/inverted part.
-5. Use **A/B** to compare curves, and **QUALITY** to choose between latency and precision.
+5. Use **A/B** to compare curves, **LR / MS** to choose stereo or mid/side processing, and **QUALITY** to choose between latency and precision.
 6. Save the result as a preset with **SAVE**, or let it travel with your project.
 
 ## What makes it different
@@ -79,13 +80,14 @@ At `A = 1` the band is actually cancelled. At `A = 2` it is polarity-inverted. A
 
 Latency at 48 kHz:
 
-| Quality | Taps | Latency |
+| Quality | Taps | Latency at 48 kHz |
 |---|---|---|
+| Fast | 1024 | 10.7 ms |
 | Low | 2048 | 21.3 ms |
 | Normal | 4096 | 42.7 ms |
 | High | 8192 | 85.3 ms |
 
-The plugin runs at roughly 7% of one core at 4096 taps on a typical desktop (FL Studio measurement); closing the editor or bypassing reduces that further.
+The engine uses zero-additional-latency partitioned FFT convolution, so the reported latency is still exactly taps / 2. In the offline benchmark, 8192 taps runs at roughly 70× realtime and 4096 taps at roughly 100× realtime with the editor closed (order-of-magnitude lower CPU than the direct convolution used in 1.0.x); with the analysers open, expect a few percent of one core.
 
 ## Build from source
 
@@ -117,13 +119,16 @@ powershell -ExecutionPolicy Bypass -File Tools\run_pluginval.ps1
 ## Validation
 
 - DSP self-test and processor integration tests pass at 44.1 / 48 / 96 / 192 kHz, block sizes 32 / 512 / 2048, mono and stereo.
+- The partitioned FFT engine is checked against the direct convolution reference at 1024 / 2048 / 4096 / 8192 taps across changing block sizes; the maximum difference is about 3e-7.
 - Null depth at 1 kHz: about −125 dB (44.1 kHz), −111 dB (48 kHz), −100 dB (96 kHz), −108 dB (192 kHz) on the test curve.
+- M/S routing is verified for identity against L/R (identical curves), mono-bass cancellation, click-free switching, and mono operation.
 - pluginval 1.0.4, strictness 10, GUI tests enabled: **SUCCESS**.
 - State schema v1 with migration from 0.1.0 projects and presets.
 
 ## Known limitations
 
 - Changing **QUALITY** changes the reported latency; the host may re-sync playback.
+- Switching **LR / MS** produces a short (~60 ms) level dip while the engine re-primes its history. Routing is a structural setting and is not host-automatable.
 - Free-drawn curves and display settings are not host-automatable, so they do not appear in the host automation list or hint panel.
 - Curve editing uses the plugin's own undo/redo, not the host undo history.
 - Windows x64 only; the build is unsigned and has no installer.

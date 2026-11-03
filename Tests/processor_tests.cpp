@@ -1,4 +1,6 @@
 #include "PluginProcessor.h"
+#include "dsp/InversionEngine.h"
+#include "dsp/PartitionedConvolver.h"
 #include "state/PresetManager.h"
 
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -627,9 +629,10 @@ bool testQuality (PolarityAudioProcessor& processor)
         return result;
     };
 
-    const auto low = run (0);
-    const auto normal = run (1);
-    const auto high = run (2);
+    const auto lowest = run (0);
+    const auto low = run (1);
+    const auto normal = run (2);
+    const auto high = run (3);
 
     auto* qualityParameter = processor.getValueTreeState().getParameter ("quality");
     const int storedQuality = qualityParameter != nullptr
@@ -637,10 +640,12 @@ bool testQuality (PolarityAudioProcessor& processor)
                                         qualityParameter->getValue()))
                                   : -1;
 
-    processor.setQuality (1);
+    processor.setQuality (2);
     processor.prepareToPlay (kSampleRate, blockSize);
     const int restoredLatency = processor.getLatencySamples();
 
+    std::printf ("quality 1024     : lat %d  null %.1f dB  delta-flat %.1f dB  dry %.1e\n",
+                 lowest.latency, lowest.nullDb, lowest.deltaFlatDb, lowest.dryError);
     std::printf ("quality 2048     : lat %d  null %.1f dB  delta-flat %.1f dB  dry %.1e\n",
                  low.latency, low.nullDb, low.deltaFlatDb, low.dryError);
     std::printf ("quality 4096     : lat %d  null %.1f dB  delta-flat %.1f dB  dry %.1e\n",
@@ -650,22 +655,27 @@ bool testQuality (PolarityAudioProcessor& processor)
     std::printf ("quality restore  : %d (stored %d)\n",
                  restoredLatency, storedQuality);
 
-    return low.latency == 1024
+    return lowest.latency == 512
+        && low.latency == 1024
         && normal.latency == 2048
         && high.latency == 4096
-        && low.nullDb < -20.0
+        && lowest.nullDb < -12.0
+        && low.nullDb < -30.0
         && normal.nullDb < -40.0
         && high.nullDb < -40.0
+        && std::abs (lowest.passDb) < 0.1
         && std::abs (low.passDb) < 0.1
         && std::abs (normal.passDb) < 0.1
         && std::abs (high.passDb) < 0.1
+        && lowest.deltaFlatDb < -60.0
         && low.deltaFlatDb < -60.0
         && normal.deltaFlatDb < -60.0
         && high.deltaFlatDb < -60.0
+        && lowest.dryError < 1.0e-6
         && low.dryError < 1.0e-6
         && normal.dryError < 1.0e-6
         && high.dryError < 1.0e-6
-        && storedQuality == 2
+        && storedQuality == 3
         && restoredLatency == 2048;
 }
 
@@ -732,7 +742,7 @@ double benchmarkProcessing (PolarityAudioProcessor& processor, double seconds,
 void resetToBaseline (PolarityAudioProcessor& processor, AudioConfig cfg = {})
 {
     processor.setActiveSlot (0);
-    processor.setQuality (1);
+    processor.setQuality (2);
     processor.setCurveSmoothing (2);
 
     auto& apvts = processor.getValueTreeState();
@@ -786,7 +796,7 @@ bool testSampleRateMatrix (PolarityAudioProcessor& processor)
         const AudioConfig cfg { row.rate, blockSize };
 
         resetRouting();
-        processor.setQuality (1);
+        processor.setQuality (2);
         processor.setCurveSmoothing (2);
         processor.setActiveSlot (0);
         processor.setCurves (wideNullCurve(), flatCurve());
@@ -823,7 +833,7 @@ bool testSampleRateMatrix (PolarityAudioProcessor& processor)
         const AudioConfig cfg { kSampleRate, bs };
 
         resetRouting();
-        processor.setQuality (1);
+        processor.setQuality (2);
         processor.setCurveSmoothing (2);
         processor.setActiveSlot (0);
         processor.setCurves (lowNullCurve(), flatCurve());
@@ -929,7 +939,7 @@ bool testBusesLayout (PolarityAudioProcessor& processor)
 
 bool testLiveSettingsSwitch (PolarityAudioProcessor& processor)
 {
-    processor.setQuality (1);
+    processor.setQuality (2);
     processor.setCurveSmoothing (2);
     processor.setActiveSlot (0);
     processor.setCurves (flatCurve(), flatCurve());
@@ -985,7 +995,7 @@ bool testLiveSettingsSwitch (PolarityAudioProcessor& processor)
 
         if (! qualityHigh && time >= 0.5)
         {
-            setChoice ("quality", 2);
+            setChoice ("quality", 3);
             qualityHigh = processor.getLatencySamples() == 4096;
         }
 
@@ -1031,7 +1041,7 @@ bool testLiveSettingsSwitch (PolarityAudioProcessor& processor)
         if (! restored && time >= 2.5)
         {
             setChoice ("slot", 0);
-            setChoice ("quality", 1);
+            setChoice ("quality", 2);
             restored = processor.getLatencySamples() == 2048
                     && processor.getActiveSlot() == 0;
         }
@@ -1125,7 +1135,7 @@ bool testBypassContinuity (PolarityAudioProcessor& processor)
     setValue ("mix", 1.0f);
     setValue ("bypass", 0.0f);
     setValue ("deltaOut", 0.0f);
-    processor.setQuality (1);
+    processor.setQuality (2);
     processor.setActiveSlot (0);
     processor.setCurves (lowNullCurve(), flatCurve());
     processor.prepareToPlay (kSampleRate, blockSize);
@@ -1187,6 +1197,392 @@ bool testMeterBallistics (PolarityAudioProcessor& processor)
         && std::abs (fast.sideDb - slow.sideDb) < 1.0f;
 }
 
+bool testConvolutionEngines()
+{
+    using polarity::dsp::CurveModel;
+    using polarity::dsp::designKernel;
+    using polarity::dsp::InversionEngine;
+    using polarity::dsp::PartitionedConvolver;
+
+    const CurveModel curve (lowNullCurve());
+    const int blockPattern[] = { 100, 441, 32, 512, 1, 2048, 64, 7 };
+    constexpr int total = 30000;
+
+    bool ok = true;
+
+    for (const int taps : { 1024, 2048, 4096, 8192 })
+    {
+        const auto kernel = designKernel (curve, kSampleRate, taps, 0);
+
+        InversionEngine direct;
+        PartitionedConvolver partitioned;
+        direct.prepare (kSampleRate, 8192, 2);
+        partitioned.prepare (kSampleRate, 8192, 2);
+        direct.setKernelsImmediate (kernel, kernel);
+        partitioned.setKernelsImmediate (kernel, kernel);
+
+        std::mt19937 rng (19);
+        std::normal_distribution<float> noise (0.0f, 0.2f);
+
+        std::vector<float> inputL (total), inputR (total);
+
+        for (int i = 0; i < total; ++i)
+        {
+            inputL[static_cast<std::size_t> (i)] = noise (rng);
+            inputR[static_cast<std::size_t> (i)] = noise (rng);
+        }
+
+        std::vector<float> directOut (static_cast<std::size_t> (total) * 2);
+        std::vector<float> fftOut (static_cast<std::size_t> (total) * 2);
+
+        int position = 0;
+        int patternIndex = 0;
+
+        while (position < total)
+        {
+            int count = blockPattern[patternIndex % 8];
+            ++patternIndex;
+            count = std::min (count, total - position);
+
+            std::vector<float> bufferDirect (static_cast<std::size_t> (count) * 2);
+            std::vector<float> bufferFft (static_cast<std::size_t> (count) * 2);
+
+            for (int i = 0; i < count; ++i)
+            {
+                bufferDirect[static_cast<std::size_t> (i)] = inputL[static_cast<std::size_t> (position + i)];
+                bufferDirect[static_cast<std::size_t> (count + i)] = inputR[static_cast<std::size_t> (position + i)];
+                bufferFft[static_cast<std::size_t> (i)] = inputL[static_cast<std::size_t> (position + i)];
+                bufferFft[static_cast<std::size_t> (count + i)] = inputR[static_cast<std::size_t> (position + i)];
+            }
+
+            float* directChannels[2] = { bufferDirect.data(), bufferDirect.data() + count };
+            float* fftChannels[2] = { bufferFft.data(), bufferFft.data() + count };
+
+            direct.process (directChannels, 2, count, true);
+            partitioned.process (fftChannels, 2, count, true);
+
+            for (int i = 0; i < count; ++i)
+            {
+                directOut[static_cast<std::size_t> (position + i)] = bufferDirect[static_cast<std::size_t> (i)];
+                directOut[static_cast<std::size_t> (total + position + i)] = bufferDirect[static_cast<std::size_t> (count + i)];
+                fftOut[static_cast<std::size_t> (position + i)] = bufferFft[static_cast<std::size_t> (i)];
+                fftOut[static_cast<std::size_t> (total + position + i)] = bufferFft[static_cast<std::size_t> (count + i)];
+            }
+
+            position += count;
+        }
+
+        double maxError = 0.0;
+
+        for (int i = 0; i < total * 2; ++i)
+            maxError = std::max (maxError,
+                                 std::abs (static_cast<double> (directOut[static_cast<std::size_t> (i)])
+                                           - static_cast<double> (fftOut[static_cast<std::size_t> (i)])));
+
+        std::printf ("fft vs direct %4d : max %.3e\n", taps, maxError);
+        ok = ok && maxError < 1.0e-4;
+    }
+
+    // primeHistory must reconstruct a state identical to having processed the
+    // same samples normally, at an arbitrary (non-hop-aligned) point.
+    {
+        const auto kernel = designKernel (curve, kSampleRate, 8192, 0);
+        InversionEngine reference;
+        PartitionedConvolver primed;
+        reference.prepare (kSampleRate, 8192, 2);
+        primed.prepare (kSampleRate, 8192, 2);
+        reference.setKernelsImmediate (kernel, kernel);
+        primed.setKernelsImmediate (kernel, kernel);
+
+        std::mt19937 rng (31);
+        std::normal_distribution<float> noise (0.0f, 0.2f);
+        constexpr int primeAt = 1000;
+        constexpr int rest = 4000;
+
+        std::vector<float> left (primeAt + rest), right (primeAt + rest);
+
+        for (int i = 0; i < primeAt + rest; ++i)
+        {
+            left[static_cast<std::size_t> (i)] = noise (rng);
+            right[static_cast<std::size_t> (i)] = noise (rng);
+        }
+
+        const auto runRange = [] (auto& engine, int from, int to,
+                                  const std::vector<float>& l,
+                                  const std::vector<float>& r,
+                                  std::vector<float>& outL,
+                                  std::vector<float>& outR)
+        {
+            int position = from;
+
+            while (position < to)
+            {
+                const int n = std::min (100, to - position);
+                std::vector<float> buffer (static_cast<std::size_t> (n) * 2);
+
+                for (int i = 0; i < n; ++i)
+                {
+                    buffer[static_cast<std::size_t> (i)] = l[static_cast<std::size_t> (position + i)];
+                    buffer[static_cast<std::size_t> (n + i)] = r[static_cast<std::size_t> (position + i)];
+                }
+
+                float* channels[2] = { buffer.data(), buffer.data() + n };
+                engine.process (channels, 2, n, true);
+
+                for (int i = 0; i < n; ++i)
+                {
+                    outL[static_cast<std::size_t> (position + i)] = buffer[static_cast<std::size_t> (i)];
+                    outR[static_cast<std::size_t> (position + i)] = buffer[static_cast<std::size_t> (n + i)];
+                }
+
+                position += n;
+            }
+        };
+
+        std::vector<float> refL (primeAt + rest), refR (primeAt + rest);
+        std::vector<float> prL (primeAt + rest), prR (primeAt + rest);
+
+        runRange (reference, 0, primeAt, left, right, refL, refR);
+        runRange (primed, 0, primeAt, left, right, prL, prR);
+
+        primed.primeHistory (left.data(), right.data(), primeAt);
+
+        runRange (reference, primeAt, primeAt + rest, left, right, refL, refR);
+        runRange (primed, primeAt, primeAt + rest, left, right, prL, prR);
+
+        double primeError = 0.0;
+
+        for (int i = primeAt; i < primeAt + rest; ++i)
+        {
+            primeError = std::max (primeError,
+                                   std::abs (static_cast<double> (refL[static_cast<std::size_t> (i)])
+                                             - static_cast<double> (prL[static_cast<std::size_t> (i)])));
+            primeError = std::max (primeError,
+                                   std::abs (static_cast<double> (refR[static_cast<std::size_t> (i)])
+                                             - static_cast<double> (prR[static_cast<std::size_t> (i)])));
+        }
+
+        std::printf ("prime history    : max %.3e\n", primeError);
+        ok = ok && primeError < 1.0e-4;
+    }
+
+    std::printf ("conv engine diff : %s\n", ok ? "PASS" : "FAIL");
+    return ok;
+}
+
+bool testMidSideRouting (PolarityAudioProcessor& processor)
+{
+    const auto sideNullCurve = []()
+    {
+        return std::vector<CurvePoint> { { 20.0, 0.0 },
+                                         { 60.0, 1.0 },
+                                         { 120.0, 1.0 },
+                                         { 300.0, 0.0 },
+                                         { 20000.0, 0.0 } };
+    };
+
+    const auto setValue = [] (PolarityAudioProcessor& p, const char* id, float value)
+    {
+        if (auto* parameter = p.getValueTreeState().getParameter (id))
+            parameter->setValueNotifyingHost (value);
+    };
+
+    const auto configure = [&] (PolarityAudioProcessor& p, int routing,
+                                const std::vector<CurvePoint>& leftCurve,
+                                const std::vector<CurvePoint>& rightCurve,
+                                int quality)
+    {
+        p.setPlayConfigDetails (2, 2, static_cast<int> (kSampleRate), blockSize);
+        p.setCurves (leftCurve, rightCurve);
+        p.setQuality (quality);
+        setValue (p, "mix", 1.0f);
+        setValue (p, "bypass", 0.0f);
+        setValue (p, "deltaOut", 0.0f);
+        setValue (p, "routing", routing == 1 ? 1.0f : 0.0f);
+        p.prepareToPlay (kSampleRate, blockSize);
+    };
+
+    // 1) Identical curves: M/S processing must be exactly L/R processing.
+    PolarityAudioProcessor lrProcessor;
+    PolarityAudioProcessor msProcessor;
+    configure (lrProcessor, 0, lowNullCurve(), lowNullCurve(), 2);
+    configure (msProcessor, 1, lowNullCurve(), lowNullCurve(), 2);
+
+    constexpr int total = 20000;
+    std::mt19937 rng (23);
+    std::normal_distribution<float> noise (0.0f, 0.2f);
+    std::vector<float> inputL (total), inputR (total);
+
+    for (int i = 0; i < total; ++i)
+    {
+        inputL[static_cast<std::size_t> (i)] = noise (rng);
+        inputR[static_cast<std::size_t> (i)] = noise (rng);
+    }
+
+    std::vector<float> lrOut (static_cast<std::size_t> (total) * 2);
+    std::vector<float> msOut (static_cast<std::size_t> (total) * 2);
+
+    const auto runStream = [&] (PolarityAudioProcessor& p, std::vector<float>& out)
+    {
+        juce::AudioBuffer<float> buffer (2, blockSize);
+        juce::MidiBuffer midi;
+
+        for (int position = 0; position < total; position += blockSize)
+        {
+            const int n = std::min (blockSize, total - position);
+
+            for (int channel = 0; channel < 2; ++channel)
+                for (int i = 0; i < n; ++i)
+                    buffer.setSample (channel, i,
+                                      channel == 0
+                                          ? inputL[static_cast<std::size_t> (position + i)]
+                                          : inputR[static_cast<std::size_t> (position + i)]);
+
+            juce::AudioBuffer<float> view (buffer.getArrayOfWritePointers(), 2, n);
+            p.processBlock (view, midi);
+
+            for (int channel = 0; channel < 2; ++channel)
+                for (int i = 0; i < n; ++i)
+                    out[static_cast<std::size_t> (channel * total + position + i)]
+                        = view.getSample (channel, i);
+        }
+    };
+
+    runStream (lrProcessor, lrOut);
+    runStream (msProcessor, msOut);
+
+    double identityError = 0.0;
+
+    for (std::size_t i = 0; i < lrOut.size(); ++i)
+        identityError = std::max (identityError,
+                                  std::abs (static_cast<double> (lrOut[i])
+                                            - static_cast<double> (msOut[i])));
+
+    // 2) Mono bass: flat M, side null below 120 Hz; a side-only tone vanishes.
+    PolarityAudioProcessor bassProcessor;
+    configure (bassProcessor, 1, flatCurve(), sideNullCurve(), 3);
+
+    const auto measureTone = [&] (bool sideOnly)
+    {
+        juce::AudioBuffer<float> buffer (2, blockSize);
+        juce::MidiBuffer midi;
+        double sum = 0.0;
+        int count = 0;
+
+        for (int position = 0; position < static_cast<int> (kSampleRate);
+             position += blockSize)
+        {
+            const int n = std::min (blockSize,
+                                    static_cast<int> (kSampleRate) - position);
+
+            for (int i = 0; i < n; ++i)
+            {
+                const double phase = 2.0 * kPi * 80.0
+                                     * static_cast<double> (position + i) / kSampleRate;
+                const float value = static_cast<float> (0.5 * std::sin (phase));
+                buffer.setSample (0, i, value);
+                buffer.setSample (1, i, sideOnly ? -value : value);
+            }
+
+            juce::AudioBuffer<float> view (buffer.getArrayOfWritePointers(), 2, n);
+            bassProcessor.processBlock (view, midi);
+
+            if (position > static_cast<int> (kSampleRate * 0.5))
+            {
+                for (int i = 0; i < n; ++i)
+                {
+                    const double l = view.getSample (0, i);
+                    const double r = view.getSample (1, i);
+                    sum += l * l + r * r;
+                    count += 2;
+                }
+            }
+        }
+
+        const double rms = std::sqrt (sum / std::max (1, count));
+        return 20.0 * std::log10 (std::max (rms, 1.0e-12) / 0.35355339059);
+    };
+
+    const double sideGain = measureTone (true);
+    bassProcessor.prepareToPlay (kSampleRate, blockSize);
+    const double midGain = measureTone (false);
+
+    // 3) Routing switch must not click and must recover.
+    PolarityAudioProcessor switchProcessor;
+    configure (switchProcessor, 0, flatCurve(), flatCurve(), 2);
+
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    juce::MidiBuffer midi;
+    double maxStep = 0.0;
+    int maxStepPosition = -1;
+    double previous = 0.0;
+    double tailSum = 0.0;
+    int tailCount = 0;
+    bool routed = false;
+
+    for (int position = 0; position < static_cast<int> (kSampleRate);
+         position += blockSize)
+    {
+        const int n = std::min (blockSize, static_cast<int> (kSampleRate) - position);
+
+        for (int i = 0; i < n; ++i)
+        {
+            const double value = 0.5 * std::sin (2.0 * kPi * 1000.0
+                                                 * static_cast<double> (position + i)
+                                                 / kSampleRate);
+            buffer.setSample (0, i, static_cast<float> (value));
+            buffer.setSample (1, i, static_cast<float> (value));
+        }
+
+        if (! routed && position >= static_cast<int> (kSampleRate * 0.5))
+        {
+            setValue (switchProcessor, "routing", 1.0f);
+            routed = true;
+        }
+
+        juce::AudioBuffer<float> view (buffer.getArrayOfWritePointers(), 2, n);
+        switchProcessor.processBlock (view, midi);
+
+        for (int i = 0; i < n; ++i)
+        {
+            const double value = view.getSample (0, i);
+
+            if (std::abs (value - previous) > maxStep)
+            {
+                maxStep = std::abs (value - previous);
+                maxStepPosition = position + i;
+            }
+
+            previous = value;
+
+            if (position + i > static_cast<int> (kSampleRate * 0.8))
+            {
+                tailSum += value * value;
+                ++tailCount;
+            }
+        }
+    }
+
+    const double tailRms = std::sqrt (tailSum / std::max (1, tailCount));
+
+    std::printf ("M/S identity     : max %.3e\n", identityError);
+    std::printf ("M/S mono bass    : side %.1f dB  mid %.1f dB\n", sideGain, midGain);
+    std::printf ("M/S switch       : maxstep %.4f at %d  tail rms %.3f\n",
+                 maxStep, maxStepPosition, tailRms);
+
+    const bool ok = identityError < 1.0e-5
+        && sideGain < -40.0
+        && std::abs (midGain) < 0.5
+        && maxStep < 0.2
+        && tailRms > 0.3;
+
+    std::printf ("M/S routing      : %s\n", ok ? "PASS" : "FAIL");
+
+    processor.setQuality (2);
+    processor.prepareToPlay (kSampleRate, blockSize);
+    return ok;
+}
+
 bool testHostParameters (PolarityAudioProcessor& processor)
 {
     auto& apvts = processor.getValueTreeState();
@@ -1206,7 +1602,7 @@ bool testHostParameters (PolarityAudioProcessor& processor)
         && mix->getText (mix->convertTo0to1 (0.5f), 128) == "50%"
         && delta->getText (1.0f, 128) == "DELTA"
         && delta->getText (0.0f, 128) == "NORM"
-        && quality->getText (quality->convertTo0to1 (2.0f), 128) == "8192 taps"
+        && quality->getText (quality->convertTo0to1 (3.0f), 128) == "8192 taps"
         && ! quality->isAutomatable()
         && slot->isAutomatable()
         && edge->isAutomatable();
@@ -1223,9 +1619,9 @@ bool testHostParameters (PolarityAudioProcessor& processor)
     processor.flushPendingParameterChanges();
     const bool slotApplied = processor.getActiveSlot() == 1;
 
-    setChoice (*quality, 2);
+    setChoice (*quality, 3);
     processor.flushPendingParameterChanges();
-    const bool qualityApplied = processor.getQuality() == 2
+    const bool qualityApplied = processor.getQuality() == 3
                                 && processor.getLatencySamples() == 4096;
 
     setChoice (*edge, 0);
@@ -1234,7 +1630,7 @@ bool testHostParameters (PolarityAudioProcessor& processor)
 
     // State round-trip with the new parameters.
     processor.setActiveSlot (1);
-    processor.setQuality (2);
+    processor.setQuality (3);
     processor.setCurveSmoothing (4);
     processor.prepareToPlay (kSampleRate, blockSize);
 
@@ -1256,7 +1652,7 @@ bool testHostParameters (PolarityAudioProcessor& processor)
     restored.prepareToPlay (kSampleRate, blockSize);
 
     const bool stateOk = restored.getActiveSlot() == 1
-        && restored.getQuality() == 2
+        && restored.getQuality() == 3
         && restored.getCurveSmoothing() == 4
         && restored.getLatencySamples() == 4096;
 
@@ -1277,7 +1673,7 @@ bool testHostParameters (PolarityAudioProcessor& processor)
                                       static_cast<int> (conflicting.getSize()));
         conflict.prepareToPlay (kSampleRate, blockSize);
 
-        conflictOk = conflict.getQuality() == 2
+        conflictOk = conflict.getQuality() == 3
                   && conflict.getLatencySamples() == 4096;
     }
 
@@ -1305,7 +1701,7 @@ bool testHostParameters (PolarityAudioProcessor& processor)
                 resaved.getData(), static_cast<int> (resaved.getSize())))
         {
             forwardOk = migrated.getActiveSlot() == 1
-                     && migrated.getQuality() == 2
+                     && migrated.getQuality() == 3
                      && resavedXml->getIntAttribute ("stateVersion", -1)
                             == PolarityAudioProcessor::getStateVersion();
         }
@@ -1343,7 +1739,7 @@ bool testHostParameters (PolarityAudioProcessor& processor)
         migrated.prepareToPlay (kSampleRate, blockSize);
 
         legacyOk = migrated.getActiveSlot() == 1
-            && migrated.getQuality() == 2
+            && migrated.getQuality() == 3
             && migrated.getCurveSmoothing() == 2
             && migrated.getLatencySamples() == 4096;
     }
@@ -1361,7 +1757,7 @@ bool testHostParameters (PolarityAudioProcessor& processor)
                  legacyOk ? "PASS" : "FAIL");
 
     processor.setActiveSlot (0);
-    processor.setQuality (1);
+    processor.setQuality (2);
     processor.setCurveSmoothing (2);
     processor.prepareToPlay (kSampleRate, blockSize);
 
@@ -1415,13 +1811,17 @@ int main()
     const bool analysisGatingOk = testAnalysisGating();
     const bool bypassContinuityOk = testBypassContinuity (processor);
     const bool meterBallisticsOk = testMeterBallistics (processor);
+    const bool convEngineOk = testConvolutionEngines();
+    const bool midSideOk = testMidSideRouting (processor);
 
-    const double benchLow = benchmarkProcessing (processor, 1.0, 0);
-    const double benchNormal = benchmarkProcessing (processor, 1.0, 1);
-    const double benchHigh = benchmarkProcessing (processor, 1.0, 2);
-    const double benchClosed = benchmarkProcessing (processor, 1.0, 1, {}, false, false);
-    const double benchBypass = benchmarkProcessing (processor, 1.0, 1, {}, true, true);
-    processor.setQuality (1);
+    const double benchTiny = benchmarkProcessing (processor, 1.0, 0);
+    const double benchLow = benchmarkProcessing (processor, 1.0, 1);
+    const double benchNormal = benchmarkProcessing (processor, 1.0, 2);
+    const double benchHigh = benchmarkProcessing (processor, 1.0, 3);
+    const double benchClosed = benchmarkProcessing (processor, 1.0, 2, {}, false, false);
+    const double benchClosedHigh = benchmarkProcessing (processor, 1.0, 3, {}, false, false);
+    const double benchBypass = benchmarkProcessing (processor, 1.0, 2, {}, true, true);
+    processor.setQuality (2);
     processor.prepareToPlay (kSampleRate, blockSize);
 
     processor.setCurvePoints (0, lowNullCurve());
@@ -1462,9 +1862,11 @@ int main()
     std::printf ("analysis gating  : %s\n", analysisGatingOk ? "PASS" : "FAIL");
     std::printf ("bypass restore   : %s\n", bypassContinuityOk ? "PASS" : "FAIL");
     std::printf ("meter ballistics : %s\n", meterBallisticsOk ? "PASS" : "FAIL");
-    std::printf ("benchmark open   : %.1fx / %.1fx / %.1fx realtime (2048/4096/8192 taps)\n",
-                 benchLow, benchNormal, benchHigh);
+    std::printf ("benchmark open   : %.1fx / %.1fx / %.1fx / %.1fx realtime "
+                 "(1024/2048/4096/8192 taps)\n",
+                 benchTiny, benchLow, benchNormal, benchHigh);
     std::printf ("benchmark closed : %.1fx realtime (4096 taps, no editor)\n", benchClosed);
+    std::printf ("benchmark closed : %.1fx realtime (8192 taps, no editor)\n", benchClosedHigh);
     std::printf ("benchmark bypass : %.1fx realtime (4096 taps)\n", benchBypass);
     std::printf ("editor smoke     : %s\n", editorOk ? "PASS" : "FAIL");
 
@@ -1489,6 +1891,8 @@ int main()
                  && analysisGatingOk
                  && bypassContinuityOk
                  && meterBallisticsOk
+                 && convEngineOk
+                 && midSideOk
                  && editorOk;
 
     std::printf ("PROCESSOR TEST   : %s\n", ok ? "PASS" : "FAIL");

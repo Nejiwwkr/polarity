@@ -408,6 +408,41 @@ PolarityAudioProcessorEditor::PolarityAudioProcessorEditor (PolarityAudioProcess
         qualityAttachment = std::make_unique<juce::ComboBoxParameterAttachment> (
             *parameter, qualityBox);
 
+    for (auto* button : { &routingLR, &routingMS })
+    {
+        styleButton (*button);
+        button->setColour (juce::TextButton::buttonColourId,
+                           juce::Colours::transparentBlack);
+        button->setClickingTogglesState (false);
+        button->setRadioGroupId (105);
+        addAndMakeVisible (*button);
+    }
+
+    if (auto* parameter = processorRef.getValueTreeState().getParameter ("routing"))
+    {
+        routingAttachment = std::make_unique<juce::ParameterAttachment> (
+            *parameter,
+            [this] (float value)
+            {
+                const bool midSide = value >= 0.5f;
+                routingLR.setToggleState (! midSide, juce::dontSendNotification);
+                routingMS.setToggleState (midSide, juce::dontSendNotification);
+            });
+        routingAttachment->sendInitialUpdate();
+    }
+
+    routingLR.onClick = [this]
+    {
+        if (routingAttachment != nullptr)
+            routingAttachment->setValueAsCompleteGesture (0.0f);
+    };
+
+    routingMS.onClick = [this]
+    {
+        if (routingAttachment != nullptr)
+            routingAttachment->setValueAsCompleteGesture (1.0f);
+    };
+
     mixSlider.setTooltip ("Mix - dry/wet blend");
     bypassToggle.setTooltip ("Bypass processing (latency is preserved)");
     normButton.setTooltip ("Normal processed output");
@@ -417,6 +452,8 @@ PolarityAudioProcessorEditor::PolarityAudioProcessorEditor (PolarityAudioProcess
     layerLeft.setTooltip ("Edit the left channel only");
     layerStereo.setTooltip ("Edit both channels together");
     layerRight.setTooltip ("Edit the right channel only");
+    routingLR.setTooltip ("Process the curves on left/right channels");
+    routingMS.setTooltip ("Process the curves on mid/side signals");
     toolDraw.setTooltip ("Draw the inverted-amount curve");
     toolNode.setTooltip ("Drag points; double-click to add, right-click to delete");
     toolErase.setTooltip ("Erase the curve back to 0");
@@ -534,6 +571,21 @@ void PolarityAudioProcessorEditor::updateButtons()
     polarityButton.setToggleState (curveEditor.isPolarityVisible(),
                                    juce::dontSendNotification);
 
+    const bool midSide = processorRef.getRoutingMode() == 1;
+
+    if (midSide != lastMidSideLabels)
+    {
+        lastMidSideLabels = midSide;
+        layerLeft.setButtonText (midSide ? "M" : "L");
+        layerRight.setButtonText (midSide ? "S" : "R");
+        layerLeft.setTooltip (midSide ? "Edit the mid (centre) signal"
+                                      : "Edit the left channel only");
+        layerRight.setTooltip (midSide ? "Edit the side (difference) signal"
+                                       : "Edit the right channel only");
+        layerStereo.setTooltip (midSide ? "Edit mid and side together"
+                                        : "Edit both channels together");
+    }
+
     const auto activeLayer = curveEditor.getLayer();
     layerLeft.setToggleState (activeLayer == CurveEditor::Layer::Left,
                               juce::dontSendNotification);
@@ -581,6 +633,7 @@ void PolarityAudioProcessorEditor::paint (juce::Graphics& g)
     g.fillRoundedRectangle (groupBounds ({ &toolDraw, &toolNode, &toolErase }), 6.0f);
     g.fillRoundedRectangle (groupBounds ({ &spectrumButton, &polarityButton }), 6.0f);
     g.fillRoundedRectangle (groupBounds ({ &normButton, &deltaButton }), 6.0f);
+    g.fillRoundedRectangle (groupBounds ({ &routingLR, &routingMS }), 6.0f);
     g.fillRoundedRectangle (groupBounds ({ &qualityCaption, &qualityBox,
                                            &edgeCaption, &edgeBox }), 6.0f);
 }
@@ -708,6 +761,9 @@ void PolarityAudioProcessorEditor::resized()
     footerRight.removeFromRight (12);
     qualityBox.setBounds (footerRight.removeFromRight (112).reduced (0, 1));
     qualityCaption.setBounds (footerRight.removeFromRight (56));
+    footerRight.removeFromRight (12);
+    routingMS.setBounds (footerRight.removeFromRight (36).reduced (0, 1));
+    routingLR.setBounds (footerRight.removeFromRight (36).reduced (0, 1));
 
     auto footerLeft = footerControls;
     footerLeft.removeFromLeft (28);

@@ -4,7 +4,7 @@
 #include <juce_dsp/juce_dsp.h>
 
 #include "dsp/CurveModel.h"
-#include "dsp/InversionEngine.h"
+#include "dsp/PartitionedConvolver.h"
 
 #include <array>
 #include <atomic>
@@ -48,19 +48,25 @@ public:
     int getEngineLatencySamples() const noexcept { return engine.getLatencySamples(); }
 
     /** Serialized state schema; increment with any structural change. */
-    static constexpr int getStateVersion() noexcept { return 1; }
+    static constexpr int getStateVersion() noexcept { return 2; }
 
-    /** FIR quality: 0 = 2048 taps, 1 = 4096 taps, 2 = 8192 taps. */
-    static constexpr int getQualityChoiceCount() noexcept { return 3; }
+    /** FIR quality: 0 = 1024, 1 = 2048, 2 = 4096, 3 = 8192 taps. */
+    static constexpr int getQualityChoiceCount() noexcept { return 4; }
 
     static constexpr int getQualityTaps (int choice) noexcept
     {
-        return choice <= 0 ? 2048 : (choice == 1 ? 4096 : 8192);
+        return choice <= 0 ? 1024 : (choice == 1 ? 2048 : (choice == 2 ? 4096 : 8192));
     }
 
     int getQuality() const noexcept
     {
         return qualityChoice.load (std::memory_order_relaxed);
+    }
+
+    /** 0 = L/R processing, 1 = M/S processing. */
+    int getRoutingMode() const noexcept
+    {
+        return routingMode.load (std::memory_order_relaxed);
     }
 
     /** Changing quality changes the reported latency; the host re-syncs PDC. */
@@ -241,9 +247,13 @@ private:
                            const juce::String& channel,
                            polarity::dsp::CurveModel& model);
 
+    enum class RoutingFade { None, Out, In };
+
     void writeCurvesToState();
     void loadCurvesFromState();
     void rebuildKernels();
+    void updateRoutingHistory (int numSamples) noexcept;
+    void primeRoutingHistory();
     void updateAnalysis (int wetLatency, int blockSamples);
     void resetAnalysis();
     void prepareSpectrumMapping (double sampleRate);
@@ -260,6 +270,7 @@ private:
     std::atomic<float>* mixParam = nullptr;
     std::atomic<float>* bypassParam = nullptr;
     std::atomic<float>* deltaOutParam = nullptr;
+    std::atomic<float>* routingParam = nullptr;
 
     mutable juce::CriticalSection curveLock;
     std::array<CurveSlot, 2> slots;
@@ -307,7 +318,7 @@ private:
     std::array<std::atomic<float>, waveformPoints> waveformInputRms;
     std::array<std::atomic<float>, waveformPoints> waveformOutputRms;
 
-    polarity::dsp::InversionEngine engine;
+    polarity::dsp::PartitionedConvolver engine;
     juce::AudioBuffer<float> dryCopy;
     std::vector<std::vector<float>> dryDelay;
     std::vector<int> dryDelayIndex;
@@ -323,13 +334,25 @@ private:
     /** Everything is prepared for the largest kernel so quality switches are
         allocation-free and only the active kernel length changes. */
     static constexpr int maxTaps = 8192;
-    std::atomic<int> qualityChoice { 1 };
+    std::atomic<int> qualityChoice { 2 };
     std::atomic<int> activeLatency { 2048 };
 
     std::atomic<int> pendingSlot { 0 };
-    std::atomic<int> pendingQuality { 1 };
+    std::atomic<int> pendingQuality { 2 };
     std::atomic<int> pendingEdgeChoice { 2 };
     std::atomic<bool> loadingState { false };
+
+    std::atomic<int> routingMode { 0 };
+    int routingTarget = 0;
+    RoutingFade routingFade = RoutingFade::None;
+    int routingFadePos = 0;
+    int routingFadeLength = 0;
+    std::vector<float> routingHistoryL;
+    std::vector<float> routingHistoryR;
+    std::vector<float> routingEncodeL;
+    std::vector<float> routingEncodeR;
+    int routingHistoryWrite = 0;
+    int routingHistoryCount = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PolarityAudioProcessor)
 };

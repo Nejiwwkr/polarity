@@ -1,9 +1,23 @@
 # Changelog
 
-## [Unreleased]
+## [1.1.0] - Unreleased
+
+### Added
+
+- 1024-tap low-latency quality tier (10.7 ms at 48 kHz).
+- L/R and M/S routing with M/S curve editing; the editor relabels the layer
+  buttons to M/ST/S and the route switches with a short fade-out/fade-in while
+  the FIR history is re-primed. M/S mode makes uses such as mono bass or
+  centre removal possible.
 
 ### Changed
 
+- The convolution engine now uses zero-additional-latency partitioned FFT
+  convolution (64-sample hop, double precision) with a direct head. CPU drops
+  by roughly an order of magnitude: 8192 taps runs at about 70x realtime in the
+  offline benchmark (previously about 9x). Reported latency is still taps / 2.
+- State schema 2: previous quality indices are remapped for the new four-tier
+  list. Existing projects and presets keep their FIR length.
 - Spectrum, waveform and meter analysis now runs only while an editor is open,
   removing the remaining analysis cost in closed-window and offline rendering.
 - Bypass and mix=0 skip the wet convolution while still keeping the FIR history

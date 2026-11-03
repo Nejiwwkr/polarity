@@ -57,8 +57,8 @@ PolarityAudioProcessor::createParameterLayout()
     layout.add (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { "quality", 1 },
         "Quality",
-        juce::StringArray { "2048 taps", "4096 taps", "8192 taps" },
-        1,
+        juce::StringArray { "1024 taps", "2048 taps", "4096 taps", "8192 taps" },
+        2,
         juce::AudioParameterChoiceAttributes().withAutomatable (false)));
 
     layout.add (std::make_unique<juce::AudioParameterChoice> (
@@ -66,6 +66,13 @@ PolarityAudioProcessor::createParameterLayout()
         "Edge Smoothing",
         juce::StringArray { "Off", "1 bin", "2 bins", "4 bins" },
         2));
+
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { "routing", 1 },
+        "Routing",
+        juce::StringArray { "L/R", "M/S" },
+        0,
+        juce::AudioParameterChoiceAttributes().withAutomatable (false)));
 
     return layout;
 }
@@ -127,6 +134,7 @@ PolarityAudioProcessor::PolarityAudioProcessor()
     mixParam = apvts.getRawParameterValue ("mix");
     bypassParam = apvts.getRawParameterValue ("bypass");
     deltaOutParam = apvts.getRawParameterValue ("deltaOut");
+    routingParam = apvts.getRawParameterValue ("routing");
 
     for (auto& slot : slots)
     {
@@ -234,6 +242,20 @@ void PolarityAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
         1.0 - std::exp (-1.0 / (0.03 * sampleRate)));
     const float deltaInitial = deltaOutParam != nullptr ? deltaOutParam->load() : 0.0f;
     deltaAmounts = { deltaInitial, deltaInitial };
+
+    const int historySize = maxTaps
+                            + 2 * polarity::dsp::PartitionedConvolver::hopSize;
+    routingHistoryL.assign (static_cast<std::size_t> (historySize), 0.0f);
+    routingHistoryR.assign (static_cast<std::size_t> (historySize), 0.0f);
+    routingEncodeL.assign (static_cast<std::size_t> (historySize), 0.0f);
+    routingEncodeR.assign (static_cast<std::size_t> (historySize), 0.0f);
+    routingHistoryWrite = 0;
+    routingHistoryCount = 0;
+    routingFadeLength = juce::jmax (1, juce::roundToInt (0.03 * sampleRate));
+    routingFade = RoutingFade::None;
+    routingFadePos = 0;
+    routingTarget = routingParam != nullptr && routingParam->load() >= 0.5f ? 1 : 0;
+    routingMode.store (routingTarget, std::memory_order_relaxed);
 }
 
 void PolarityAudioProcessor::releaseResources()
@@ -286,8 +308,73 @@ void PolarityAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
     if (analysisActive && analysisResetRequested.exchange (false))
         resetAnalysis();
 
+    // --- L/R <-> M/S routing --------------------------------------------
+    const int requestedRouting
+        = routingParam != nullptr && routingParam->load() >= 0.5f ? 1 : 0;
+
+    if (routingFade == RoutingFade::Out)
+        routingTarget = requestedRouting;   // latest request wins while fading out
+
+    if (requestedRouting != routingMode.load (std::memory_order_relaxed)
+        && routingFade == RoutingFade::None)
+    {
+        routingTarget = requestedRouting;
+        routingFade = RoutingFade::Out;
+        routingFadePos = 0;
+    }
+
+    if (routingFade == RoutingFade::Out && routingFadePos >= routingFadeLength)
+    {
+        routingMode.store (routingTarget, std::memory_order_relaxed);
+        primeRoutingHistory();
+        routingFade = RoutingFade::In;
+        routingFadePos = 0;
+    }
+
+    updateRoutingHistory (numSamples);
+
+    const bool msRouting = routingMode.load (std::memory_order_relaxed) == 1
+                           && processedChannels > 1;
+
+    if (msRouting)
+    {
+        auto* left = pointers[0];
+        auto* right = pointers[1];
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const float l = left[i];
+            const float r = right[i];
+            left[i] = 0.5f * (l + r);
+            right[i] = 0.5f * (l - r);
+        }
+    }
+
     const bool renderWet = ! bypassed && mix > 0.0f;
     engine.process (pointers, processedChannels, numSamples, renderWet);
+
+    if (msRouting)
+    {
+        auto* mid = pointers[0];
+        auto* side = pointers[1];
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const float m = mid[i];
+            const float s = side[i];
+            mid[i] = m + s;
+            side[i] = m - s;
+        }
+    }
+
+    // The engine only advances activeTaps when it actually commits a kernel.
+    const int committedLatency = engine.getLatencySamples();
+
+    if (committedLatency != activeLatency.load (std::memory_order_relaxed))
+    {
+        activeLatency.store (committedLatency, std::memory_order_relaxed);
+        triggerAsyncUpdate();
+    }
 
     const int latency = juce::jlimit (
         0, static_cast<int> (dryDelay.empty() ? 0 : dryDelay[0].size()),
@@ -348,11 +435,34 @@ void PolarityAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
             deltaAmount += (deltaTarget - deltaAmount) * deltaSmoothingCoeff;
 
-            output[sample] = bypassed ? dry
-                                      : normal + deltaAmount * (delta - normal);
+            float result = bypassed ? dry
+                                    : normal + deltaAmount * (delta - normal);
+
+            if (! bypassed && routingFade != RoutingFade::None)
+            {
+                const int position = juce::jlimit (0, routingFadeLength,
+                                                   routingFadePos + sample);
+                const float t = static_cast<float> (position)
+                                / static_cast<float> (routingFadeLength);
+
+                result *= routingFade == RoutingFade::Out ? (1.0f - t) : t;
+            }
+
+            output[sample] = result;
         }
 
         storedIndex = writeIndex;
+    }
+
+    if (routingFade != RoutingFade::None)
+    {
+        routingFadePos += numSamples;
+
+        if (routingFade == RoutingFade::In && routingFadePos >= routingFadeLength)
+        {
+            routingFade = RoutingFade::None;
+            routingFadePos = 0;
+        }
     }
 
     if (dryLatencyFadePos < dryLatencyFadeLength)
@@ -618,6 +728,66 @@ void PolarityAudioProcessor::rebuildKernels()
         polarity::dsp::designKernel (right, sampleRate, taps, edgeSmoothing));
 }
 
+void PolarityAudioProcessor::updateRoutingHistory (int numSamples) noexcept
+{
+    const int size = static_cast<int> (routingHistoryL.size());
+
+    if (size <= 0)
+        return;
+
+    const auto* left = dryCopy.getReadPointer (0);
+    const auto* right = dryCopy.getReadPointer (1);
+    int write = routingHistoryWrite;
+
+    for (int i = 0; i < numSamples; ++i)
+    {
+        routingHistoryL[static_cast<std::size_t> (write)] = left[i];
+        routingHistoryR[static_cast<std::size_t> (write)] = right[i];
+        write = (write + 1 == size) ? 0 : write + 1;
+    }
+
+    routingHistoryWrite = write;
+    routingHistoryCount = std::min (size, routingHistoryCount + numSamples);
+}
+
+void PolarityAudioProcessor::primeRoutingHistory()
+{
+    const int size = static_cast<int> (routingHistoryL.size());
+
+    if (size <= 0 || routingHistoryCount <= 0)
+    {
+        engine.reset();
+        return;
+    }
+
+    const int count = std::min (routingHistoryCount, size);
+    const bool toMidSide = routingMode.load (std::memory_order_relaxed) == 1
+                           && getTotalNumInputChannels() > 1;
+
+    int index = (routingHistoryWrite - count + size) % size;
+
+    for (int i = 0; i < count; ++i)
+    {
+        const float l = routingHistoryL[static_cast<std::size_t> (index)];
+        const float r = routingHistoryR[static_cast<std::size_t> (index)];
+
+        if (toMidSide)
+        {
+            routingEncodeL[static_cast<std::size_t> (i)] = 0.5f * (l + r);
+            routingEncodeR[static_cast<std::size_t> (i)] = 0.5f * (l - r);
+        }
+        else
+        {
+            routingEncodeL[static_cast<std::size_t> (i)] = l;
+            routingEncodeR[static_cast<std::size_t> (i)] = r;
+        }
+
+        index = (index + 1 == size) ? 0 : index + 1;
+    }
+
+    engine.primeHistory (routingEncodeL.data(), routingEncodeR.data(), count);
+}
+
 void PolarityAudioProcessor::setQuality (int choice)
 {
     choice = juce::jlimit (0, getQualityChoiceCount() - 1, choice);
@@ -650,7 +820,7 @@ void PolarityAudioProcessor::syncPendingFromParameters()
 {
     pendingSlot.store (juce::jlimit (0, 1, parameterIndex ("slot", 0)));
     pendingQuality.store (juce::jlimit (0, getQualityChoiceCount() - 1,
-                                        parameterIndex ("quality", 1)));
+                                        parameterIndex ("quality", 2)));
     pendingEdgeChoice.store (juce::jlimit (0, getEdgeChoiceCount() - 1,
                                            parameterIndex ("edge", 2)));
 }
@@ -697,6 +867,14 @@ void PolarityAudioProcessor::parameterChanged (const juce::String& parameterID,
 void PolarityAudioProcessor::handleAsyncUpdate()
 {
     applyPendingSettings();
+
+    // The engine commits a new kernel (and its tap count) on the audio thread;
+    // publish the committed latency from here so PDC always matches the kernel
+    // that is actually in use, even when a switch is delayed by a fade.
+    const int committedLatency = activeLatency.load (std::memory_order_relaxed);
+
+    if (committedLatency != getLatencySamples())
+        setLatencySamples (committedLatency);
 }
 
 void PolarityAudioProcessor::applyPendingSettings()
@@ -724,6 +902,9 @@ void PolarityAudioProcessor::applyPendingSettings()
     {
         qualityChoice.store (newQuality);
 
+        // Publish the requested latency immediately so hosts that query it
+        // right after a gesture see the new value; the audio thread corrects
+        // this again if the engine has to defer the commit behind a fade.
         if (currentSampleRate.load (std::memory_order_relaxed) > 0.0)
         {
             const int latency = getQualityTaps (newQuality) / 2;
@@ -1062,15 +1243,30 @@ void PolarityAudioProcessor::setStateInformation (const void* data, int sizeInBy
     // Version 0 predates the slot / quality parameters and the schema marker.
     const int sourceVersion = xml->getIntAttribute ("stateVersion", 0);
     const bool hasSlotParameter = xml->getChildByAttribute ("id", "slot") != nullptr;
-    const bool hasQualityParameter = xml->getChildByAttribute ("id", "quality") != nullptr;
 
     int legacySlot = 0;
 
     if (auto* curves = xml->getChildByName ("CURVES"))
         legacySlot = juce::jlimit (0, 1, curves->getIntAttribute ("active", 0));
 
-    const int legacyQuality = juce::jlimit (0, getQualityChoiceCount() - 1,
-                                            xml->getIntAttribute ("quality", 1));
+    const int legacyQuality = juce::jlimit (0, 3, xml->getIntAttribute ("quality", 1));
+
+    // Schema 2 added the 1024-tap tier at the front of the choice list, so
+    // quality indices from older states mean one step lower than they used to.
+    // Read the stored (normalised) value explicitly instead of relying on how
+    // the new choice count happens to round it.
+    int remappedQuality = -1;
+
+    if (sourceVersion < 2)
+    {
+        int oldIndex = legacyQuality;
+
+        if (const auto* qualityNode = xml->getChildByAttribute ("id", "quality"))
+            oldIndex = juce::roundToInt (static_cast<float> (
+                qualityNode->getDoubleAttribute ("value", 0.5)) * 2.0f);
+
+        remappedQuality = juce::jlimit (0, 2, oldIndex) + 1;
+    }
 
     loadingState.store (true, std::memory_order_release);
     apvts.replaceState (juce::ValueTree::fromXml (*xml));
@@ -1078,22 +1274,34 @@ void PolarityAudioProcessor::setStateInformation (const void* data, int sizeInBy
     if (! hasSlotParameter)
         writeParameterValue ("slot", legacySlot);
 
-    // A versioned state's root "quality" property is stale by definition.
-    if (! hasQualityParameter && sourceVersion == 0)
-        writeParameterValue ("quality", legacyQuality);
+    if (remappedQuality >= 0)
+        writeParameterValue ("quality", remappedQuality);
 
     loadingState.store (false, std::memory_order_release);
 
     const int slot = hasSlotParameter ? parameterIndex ("slot", legacySlot)
                                       : legacySlot;
-    const int quality = hasQualityParameter ? parameterIndex ("quality", legacyQuality)
-                                            : legacyQuality;
+    const int quality = parameterIndex ("quality", 2);
     const int edgeChoice = parameterIndex ("edge", 2);
     const int edgeBins = getEdgeBinsForChoice (edgeChoice);
 
     pendingSlot.store (slot);
     pendingQuality.store (quality);
     pendingEdgeChoice.store (edgeChoice);
+
+    const int newRouting = juce::jlimit (0, 1, parameterIndex ("routing", 0));
+
+    if (newRouting != routingMode.load (std::memory_order_relaxed))
+    {
+        routingMode.store (newRouting, std::memory_order_relaxed);
+        routingHistoryCount = 0;
+        routingHistoryWrite = 0;
+        engine.reset();
+    }
+
+    routingTarget = newRouting;
+    routingFade = RoutingFade::None;
+    routingFadePos = 0;
 
     loadCurvesFromState();
 

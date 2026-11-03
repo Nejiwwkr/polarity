@@ -85,5 +85,10 @@ private:
     std::unique_ptr<juce::ComboBoxParameterAttachment> qualityAttachment;
     double qualitySampleRate = 0.0;
 
+    juce::TextButton routingLR { "LR" };
+    juce::TextButton routingMS { "MS" };
+    std::unique_ptr<juce::ParameterAttachment> routingAttachment;
+    bool lastMidSideLabels = false;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PolarityAudioProcessorEditor)
 };
