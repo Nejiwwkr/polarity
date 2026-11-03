@@ -69,6 +69,13 @@ public:
     /** Applies queued host parameter changes synchronously (message thread). */
     void flushPendingParameterChanges();
 
+    /** Called by editors; analysis and metering only run while one is open. */
+    void setEditorActive (bool active);
+    bool isAnalysisActive() const noexcept
+    {
+        return editorRefCount.load (std::memory_order_relaxed) > 0;
+    }
+
     static constexpr int getEdgeChoiceCount() noexcept { return 4; }
 
     static int getEdgeBinsForChoice (int choice) noexcept
@@ -239,6 +246,7 @@ private:
     void rebuildKernels();
     void updateAnalysis (int wetLatency, int blockSamples);
     void resetAnalysis();
+    void prepareSpectrumMapping (double sampleRate);
 
     void parameterChanged (const juce::String& parameterID, float newValue) override;
     void handleAsyncUpdate() override;
@@ -279,6 +287,14 @@ private:
     std::atomic<float> waveformWindowMs { 1000.0f };
     int waveformUpdateCounter = 0;
     int spectrumUpdateCounter = 0;
+    std::atomic<int> editorRefCount { 0 };
+    std::atomic<bool> analysisResetRequested { false };
+
+    static constexpr int maxBandBins = 6;
+    std::array<std::array<int, maxBandBins>, spectrumBands> bandBinIndex {};
+    std::array<std::array<float, maxBandBins>, spectrumBands> bandBinWeight {};
+    std::array<int, spectrumBands> bandBinCount {};
+    std::array<float, spectrumBands> bandWeightSum {};
     std::atomic<int> spectrumSmoothingRadius { 2 };
     std::atomic<float> spectrumTimeSmoothingMs { 200.0f };
     std::atomic<int> curveSmoothingBins { 2 };
@@ -298,6 +314,11 @@ private:
 
     std::array<float, 2> deltaAmounts { 0.0f, 0.0f };
     float deltaSmoothingCoeff = 1.0f;
+
+    int dryLatencyInUse = 0;
+    int dryLatencyPrevious = 0;
+    int dryLatencyFadePos = 0;
+    int dryLatencyFadeLength = 0;
 
     /** Everything is prepared for the largest kernel so quality switches are
         allocation-free and only the active kernel length changes. */

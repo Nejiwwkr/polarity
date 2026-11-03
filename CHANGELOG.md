@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- Spectrum, waveform and meter analysis now runs only while an editor is open,
+  removing the remaining analysis cost in closed-window and offline rendering.
+- Bypass and mix=0 skip the wet convolution while still keeping the FIR history
+  warm, so re-enabling produces no stale-history transient.
+- Waveform analysis updates at a time-based rate instead of every four blocks;
+  spectrum band bin/weight tables are precomputed.
+- Meter ballistics use time-based smoothing coefficients, independent of block size.
+- Curve drags coalesce FIR redesigns to roughly 25 Hz; mouse-up still applies
+  immediately.
+- Changing QUALITY crossfades the dry delay length alongside the wet kernel fade.
+
 ## [1.0.0] - 2026-11-03
 
 ### Added

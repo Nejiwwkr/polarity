@@ -271,7 +271,8 @@ struct MeterResult
     float correlation = 0.0f;
 };
 
-MeterResult measureMeters (PolarityAudioProcessor& processor, bool antiPhase)
+MeterResult measureMeters (PolarityAudioProcessor& processor, bool antiPhase,
+                           AudioConfig cfg = {})
 {
     if (auto* mix = processor.getValueTreeState().getParameter ("mix"))
         mix->setValueNotifyingHost (1.0f);
@@ -279,31 +280,38 @@ MeterResult measureMeters (PolarityAudioProcessor& processor, bool antiPhase)
     if (auto* bypass = processor.getValueTreeState().getParameter ("bypass"))
         bypass->setValueNotifyingHost (0.0f);
 
+    processor.setEditorActive (true);
     processor.setCurves (flatCurve(), flatCurve());
-    processor.prepareToPlay (kSampleRate, blockSize);
+    processor.prepareToPlay (cfg.sampleRate, cfg.blockSize);
 
-    juce::AudioBuffer<float> buffer (2, blockSize);
+    juce::AudioBuffer<float> buffer (2, cfg.blockSize);
     juce::MidiBuffer midi;
+    const int total = static_cast<int> (cfg.sampleRate * 0.5);
 
-    for (int position = 0; position < static_cast<int> (kSampleRate * 0.5);
-         position += blockSize)
+    for (int position = 0; position < total; position += cfg.blockSize)
     {
-        for (int i = 0; i < blockSize; ++i)
+        const int n = std::min (cfg.blockSize, total - position);
+
+        for (int i = 0; i < n; ++i)
         {
             const float value = 0.5f * static_cast<float> (
                 std::sin (2.0 * kPi * 1000.0
-                          * static_cast<double> (position + i) / kSampleRate));
+                          * static_cast<double> (position + i) / cfg.sampleRate));
 
             buffer.setSample (0, i, value);
             buffer.setSample (1, i, antiPhase ? -value : value);
         }
 
-        processor.processBlock (buffer, midi);
+        juce::AudioBuffer<float> view (buffer.getArrayOfWritePointers(), 2, n);
+        processor.processBlock (view, midi);
     }
 
-    return { processor.getMeterMidDb(),
-             processor.getMeterSideDb(),
-             processor.getMeterCorrelation() };
+    const MeterResult result { processor.getMeterMidDb(),
+                               processor.getMeterSideDb(),
+                               processor.getMeterCorrelation() };
+
+    processor.setEditorActive (false);
+    return result;
 }
 
 bool testABSlots (PolarityAudioProcessor& processor)
@@ -388,6 +396,7 @@ AnalysisResult testAnalysis (PolarityAudioProcessor& processor,
     if (auto* bypass = processor.getValueTreeState().getParameter ("bypass"))
         bypass->setValueNotifyingHost (0.0f);
 
+    processor.setEditorActive (true);
     processor.setActiveSlot (0);
     processor.setCurves (flatCurve(), flatCurve());
     processor.prepareToPlay (cfg.sampleRate, cfg.blockSize);
@@ -448,6 +457,7 @@ AnalysisResult testAnalysis (PolarityAudioProcessor& processor,
              && result.outFlat - result.outNull > 20.0f
              && result.maxWave < 0.05f;
 
+    processor.setEditorActive (false);
     return result;
 }
 
@@ -660,19 +670,21 @@ bool testQuality (PolarityAudioProcessor& processor)
 }
 
 double benchmarkProcessing (PolarityAudioProcessor& processor, double seconds,
-                            int quality = 1, AudioConfig cfg = {})
+                            int quality = 1, AudioConfig cfg = {},
+                            bool editorActive = true, bool bypassed = false)
 {
     if (auto* mix = processor.getValueTreeState().getParameter ("mix"))
         mix->setValueNotifyingHost (1.0f);
 
     if (auto* bypass = processor.getValueTreeState().getParameter ("bypass"))
-        bypass->setValueNotifyingHost (0.0f);
+        bypass->setValueNotifyingHost (bypassed ? 1.0f : 0.0f);
 
     if (auto* delta = processor.getValueTreeState().getParameter ("deltaOut"))
         delta->setValueNotifyingHost (0.0f);
 
     processor.setCurves (lowNullCurve(), flatCurve());
     processor.setQuality (quality);
+    processor.setEditorActive (editorActive);
     processor.prepareToPlay (cfg.sampleRate, cfg.blockSize);
 
     std::mt19937 rng (11);
@@ -707,6 +719,12 @@ double benchmarkProcessing (PolarityAudioProcessor& processor, double seconds,
         if (elapsed > 0.0)
             best = std::max (best, (seconds * 1000.0) / elapsed);
     }
+
+    if (editorActive)
+        processor.setEditorActive (false);
+
+    if (auto* bypass = processor.getValueTreeState().getParameter ("bypass"))
+        bypass->setValueNotifyingHost (0.0f);
 
     return best;
 }
@@ -853,6 +871,7 @@ bool testBusesLayout (PolarityAudioProcessor& processor)
     monoProcessor.setPlayConfigDetails (1, 1, static_cast<int> (kSampleRate), blockSize);
     monoProcessor.setCurvePoints (0, lowNullCurve());
     monoProcessor.setCurvePoints (1, flatCurve());
+    monoProcessor.setEditorActive (true);
 
     const double monoNull = measureSineGainDb (monoProcessor, 400.0, 0);
     const double monoPass = measureSineGainDb (monoProcessor, 5000.0, 0);
@@ -897,6 +916,8 @@ bool testBusesLayout (PolarityAudioProcessor& processor)
                 std::abs (static_cast<double> (monoView.getSample (0, i))
                           - static_cast<double> (stereoView.getSample (0, i))));
     }
+
+    monoProcessor.setEditorActive (false);
 
     std::printf ("buses            : layouts %s  mono null %.1f dB pass %+5.2f dB  "
                  "side %.0f  corr %.2f  parity %.1e\n",
@@ -1038,6 +1059,132 @@ bool testLiveSettingsSwitch (PolarityAudioProcessor& processor)
 
     resetToBaseline (processor);
     return ok;
+}
+
+bool testAnalysisGating()
+{
+    PolarityAudioProcessor processor;
+    processor.setPlayConfigDetails (2, 2, static_cast<int> (kSampleRate), blockSize);
+    processor.setCurvePoints (0, flatCurve());
+    processor.setCurvePoints (1, flatCurve());
+    processor.prepareToPlay (kSampleRate, blockSize);
+
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    juce::MidiBuffer midi;
+    const int band = bandForFreq (1000.0);
+
+    const auto runSine = [&] (double seconds)
+    {
+        const int total = static_cast<int> (kSampleRate * seconds);
+
+        for (int position = 0; position < total; position += blockSize)
+        {
+            const int n = std::min (blockSize, total - position);
+            fillSine (buffer, position, n, 1000.0, kSampleRate);
+            juce::AudioBuffer<float> view (buffer.getArrayOfWritePointers(), 2, n);
+            processor.processBlock (view, midi);
+        }
+    };
+
+    const int lastWavePoint = PolarityAudioProcessor::getWaveformPointCount() - 1;
+
+    runSine (0.4);
+    const float inactiveSpectrum = processor.getSpectrumInput (band);
+    const float inactiveWave = processor.getWaveformOutputMax (lastWavePoint);
+
+    processor.setEditorActive (true);
+    runSine (0.4);
+    const float activeSpectrum = processor.getSpectrumInput (band);
+    const float activeWave = processor.getWaveformOutputMax (lastWavePoint);
+
+    processor.setEditorActive (false);
+    runSine (0.2);
+    const float afterDisable = processor.getSpectrumInput (band);
+
+    std::printf ("analysis gating  : inactive %.1f dB / active %.1f dB / after %.1f dB  "
+                 "wave %.3f -> %.3f\n",
+                 inactiveSpectrum, activeSpectrum, afterDisable,
+                 inactiveWave, activeWave);
+
+    return inactiveSpectrum < -80.0f
+        && activeSpectrum > -40.0f
+        && afterDisable == activeSpectrum
+        && std::abs (inactiveWave) < 1.0e-6f
+        && activeWave > 0.01f;
+}
+
+bool testBypassContinuity (PolarityAudioProcessor& processor)
+{
+    auto& apvts = processor.getValueTreeState();
+    const auto setValue = [&apvts] (const char* id, float value)
+    {
+        if (auto* parameter = apvts.getParameter (id))
+            parameter->setValueNotifyingHost (value);
+    };
+
+    setValue ("mix", 1.0f);
+    setValue ("bypass", 0.0f);
+    setValue ("deltaOut", 0.0f);
+    processor.setQuality (1);
+    processor.setActiveSlot (0);
+    processor.setCurves (lowNullCurve(), flatCurve());
+    processor.prepareToPlay (kSampleRate, blockSize);
+
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    juce::MidiBuffer midi;
+    const int total = static_cast<int> (kSampleRate * 1.0);
+    double tailSum = 0.0;
+    int tailCount = 0;
+
+    for (int position = 0; position < total; position += blockSize)
+    {
+        const int n = std::min (blockSize, total - position);
+        fillSine (buffer, position, n, 1000.0, kSampleRate);
+
+        const double time = static_cast<double> (position) / kSampleRate;
+
+        if (time >= 0.2 && time < 0.5)
+            setValue ("bypass", 1.0f);
+        else if (time >= 0.5)
+            setValue ("bypass", 0.0f);
+
+        juce::AudioBuffer<float> view (buffer.getArrayOfWritePointers(), 2, n);
+        processor.processBlock (view, midi);
+
+        if (time >= 0.7)
+        {
+            for (int i = 0; i < n; ++i)
+            {
+                const double value = view.getSample (0, i);
+                tailSum += value * value;
+                ++tailCount;
+            }
+        }
+    }
+
+    const double tailDb = 20.0 * std::log10 (
+        std::max (std::sqrt (tailSum / std::max (1, tailCount))
+                      * std::sqrt (2.0) / 0.5,
+                  1.0e-15));
+
+    std::printf ("bypass restore   : tail %.1f dB\n", tailDb);
+
+    setValue ("bypass", 0.0f);
+    resetToBaseline (processor);
+    return tailDb < -40.0;
+}
+
+bool testMeterBallistics (PolarityAudioProcessor& processor)
+{
+    const auto fast = measureMeters (processor, false, { kSampleRate, 32 });
+    const auto slow = measureMeters (processor, false, { kSampleRate, 512 });
+    const float difference = std::abs (fast.midDb - slow.midDb);
+
+    std::printf ("meter block size : 32 blocks %.1f dB / 512 blocks %.1f dB  diff %.2f dB\n",
+                 fast.midDb, slow.midDb, difference);
+
+    return difference < 1.0f
+        && std::abs (fast.sideDb - slow.sideDb) < 1.0f;
 }
 
 bool testHostParameters (PolarityAudioProcessor& processor)
@@ -1265,10 +1412,15 @@ int main()
     const bool rateMatrixOk = testSampleRateMatrix (processor);
     const bool busesOk = testBusesLayout (processor);
     const bool liveSwitchOk = testLiveSettingsSwitch (processor);
+    const bool analysisGatingOk = testAnalysisGating();
+    const bool bypassContinuityOk = testBypassContinuity (processor);
+    const bool meterBallisticsOk = testMeterBallistics (processor);
 
     const double benchLow = benchmarkProcessing (processor, 1.0, 0);
     const double benchNormal = benchmarkProcessing (processor, 1.0, 1);
     const double benchHigh = benchmarkProcessing (processor, 1.0, 2);
+    const double benchClosed = benchmarkProcessing (processor, 1.0, 1, {}, false, false);
+    const double benchBypass = benchmarkProcessing (processor, 1.0, 1, {}, true, true);
     processor.setQuality (1);
     processor.prepareToPlay (kSampleRate, blockSize);
 
@@ -1307,8 +1459,13 @@ int main()
     std::printf ("rate matrix      : %s\n", rateMatrixOk ? "PASS" : "FAIL");
     std::printf ("buses test       : %s\n", busesOk ? "PASS" : "FAIL");
     std::printf ("live switch test : %s\n", liveSwitchOk ? "PASS" : "FAIL");
-    std::printf ("benchmark        : %.1fx / %.1fx / %.1fx realtime (2048/4096/8192 taps)\n",
+    std::printf ("analysis gating  : %s\n", analysisGatingOk ? "PASS" : "FAIL");
+    std::printf ("bypass restore   : %s\n", bypassContinuityOk ? "PASS" : "FAIL");
+    std::printf ("meter ballistics : %s\n", meterBallisticsOk ? "PASS" : "FAIL");
+    std::printf ("benchmark open   : %.1fx / %.1fx / %.1fx realtime (2048/4096/8192 taps)\n",
                  benchLow, benchNormal, benchHigh);
+    std::printf ("benchmark closed : %.1fx realtime (4096 taps, no editor)\n", benchClosed);
+    std::printf ("benchmark bypass : %.1fx realtime (4096 taps)\n", benchBypass);
     std::printf ("editor smoke     : %s\n", editorOk ? "PASS" : "FAIL");
 
     const bool ok = latency == 2048
@@ -1329,6 +1486,9 @@ int main()
                  && rateMatrixOk
                  && busesOk
                  && liveSwitchOk
+                 && analysisGatingOk
+                 && bypassContinuityOk
+                 && meterBallisticsOk
                  && editorOk;
 
     std::printf ("PROCESSOR TEST   : %s\n", ok ? "PASS" : "FAIL");

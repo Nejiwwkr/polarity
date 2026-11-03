@@ -76,7 +76,7 @@ private:
     void timerCallback() override;
 
     void reloadFromProcessor();
-    void applyEdits();
+    void applyEdits (bool force = false);
     void pushUndo();
     void addOrUpdatePoint (double freq, double amount);
     void eraseNear (float x);
@@ -130,6 +130,8 @@ private:
     std::vector<Snapshot> undoStack;
     std::vector<Snapshot> redoStack;
     static constexpr std::size_t maxUndo = 64;
+    double lastApplyTimeMs = 0.0;
+    bool editApplyPending = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (CurveEditor)
 };

@@ -14,7 +14,7 @@ namespace polarity::dsp
 
     The message thread publishes a new stereo kernel pair into one of four
     preallocated buffers; the audio thread picks it up at a block boundary and
-    crossfades from the previous pair over ~40 ms.  No allocation, locking or
+    crossfades from the previous pair over ~60 ms.  No allocation, locking or
     FFT work happens on the audio thread.
 */
 class InversionEngine
@@ -31,7 +31,10 @@ public:
     /** Message thread: queue a pair; dropped if a fade/queue is already busy. */
     void setKernels (const FirKernel& left, const FirKernel& right);
 
-    void process (float* const* channels, int numChannels, int numSamples);
+    /** renderOutput == false keeps the history warm without computing the
+        convolution, so bypassed output can skip the dot products. */
+    void process (float* const* channels, int numChannels, int numSamples,
+                  bool renderOutput = true);
 
     /** Active kernel length, which may be shorter than the prepared maximum. */
     int getNumTaps() const noexcept

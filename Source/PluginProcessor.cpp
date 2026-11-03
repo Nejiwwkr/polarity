@@ -192,6 +192,14 @@ void PolarityAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     activeLatency.store (taps / 2, std::memory_order_relaxed);
     setLatencySamples (taps / 2);
 
+    dryLatencyFadeLength = juce::jmax (
+        1, static_cast<int> (std::lround (0.06 * sampleRate)));
+    dryLatencyInUse = taps / 2;
+    dryLatencyPrevious = dryLatencyInUse;
+    dryLatencyFadePos = dryLatencyFadeLength;
+
+    prepareSpectrumMapping (sampleRate);
+
     analysisWork.assign (static_cast<std::size_t> (fftSize * 2), 0.0f);
     hannWindow.resize (static_cast<std::size_t> (fftSize));
 
@@ -268,17 +276,32 @@ void PolarityAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         processedChannels > 1 ? buffer.getWritePointer (1) : nullptr
     };
 
-    engine.process (pointers, processedChannels, numSamples);
-
     const float mix = mixParam != nullptr ? mixParam->load() : 1.0f;
     const bool bypassed = bypassParam != nullptr && bypassParam->load() >= 0.5f;
     const float deltaTarget = ! bypassed && deltaOutParam != nullptr
                                   && deltaOutParam->load() >= 0.5f
                               ? 1.0f : 0.0f;
+    const bool analysisActive = editorRefCount.load (std::memory_order_relaxed) > 0;
+
+    if (analysisActive && analysisResetRequested.exchange (false))
+        resetAnalysis();
+
+    const bool renderWet = ! bypassed && mix > 0.0f;
+    engine.process (pointers, processedChannels, numSamples, renderWet);
 
     const int latency = juce::jlimit (
         0, static_cast<int> (dryDelay.empty() ? 0 : dryDelay[0].size()),
         activeLatency.load (std::memory_order_relaxed));
+
+    if (latency != dryLatencyInUse)
+    {
+        dryLatencyPrevious = dryLatencyInUse;
+        dryLatencyInUse = latency;
+        dryLatencyFadePos = 0;
+    }
+
+    const bool latencyFading = dryLatencyFadePos < dryLatencyFadeLength
+                               && dryLatencyPrevious != dryLatencyInUse;
 
     for (int channel = 0; channel < processedChannels; ++channel)
     {
@@ -292,12 +315,28 @@ void PolarityAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
             continue;
 
         int writeIndex = storedIndex;
-        int readIndex = (storedIndex + delaySize - latency) % delaySize;
+        int readIndex = (storedIndex + delaySize - dryLatencyInUse) % delaySize;
+        int previousIndex = latencyFading
+                                ? (storedIndex + delaySize - dryLatencyPrevious) % delaySize
+                                : readIndex;
         const auto* dryInput = dryCopy.getReadPointer (channel);
 
         for (int sample = 0; sample < numSamples; ++sample)
         {
-            const float dry = delay[static_cast<std::size_t> (readIndex)];
+            float dry = delay[static_cast<std::size_t> (readIndex)];
+
+            if (latencyFading)
+            {
+                const int position = juce::jlimit (
+                    0, dryLatencyFadeLength, dryLatencyFadePos + sample);
+                const float t = static_cast<float> (position)
+                                / static_cast<float> (dryLatencyFadeLength);
+                const float previousDry = delay[static_cast<std::size_t> (previousIndex)];
+                dry = previousDry + (dry - previousDry) * t;
+
+                previousIndex = (previousIndex + 1 == delaySize) ? 0 : previousIndex + 1;
+            }
+
             delay[static_cast<std::size_t> (writeIndex)] = dryInput[sample];
 
             writeIndex = (writeIndex + 1 == delaySize) ? 0 : writeIndex + 1;
@@ -315,6 +354,13 @@ void PolarityAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
         storedIndex = writeIndex;
     }
+
+    if (dryLatencyFadePos < dryLatencyFadeLength)
+        dryLatencyFadePos = juce::jmin (dryLatencyFadeLength,
+                                        dryLatencyFadePos + numSamples);
+
+    if (! analysisActive)
+        return;
 
     // --- post-output M/S metering ---------------------------------------
     {
@@ -352,17 +398,29 @@ void PolarityAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
         const float midDb = toDb (midRms);
         const float sideDb = toDb (sideRms);
 
-        meterMidDb.store (std::clamp (meterMidDb.load (std::memory_order_relaxed) * 0.75f
-                                          + midDb * 0.25f,
-                                      -72.0f, 6.0f),
+        const double sampleRate = currentSampleRate.load (std::memory_order_relaxed);
+        const double blockSeconds = sampleRate > 0.0
+                                        ? static_cast<double> (numSamples) / sampleRate
+                                        : 0.0;
+        const float midAlpha = static_cast<float> (
+            1.0 - std::exp (-blockSeconds / 0.040));
+        const float correlationAlpha = static_cast<float> (
+            1.0 - std::exp (-blockSeconds / 0.080));
+
+        meterMidDb.store (std::clamp (
+                              meterMidDb.load (std::memory_order_relaxed) * (1.0f - midAlpha)
+                                  + midDb * midAlpha,
+                              -72.0f, 6.0f),
                           std::memory_order_relaxed);
-        meterSideDb.store (std::clamp (meterSideDb.load (std::memory_order_relaxed) * 0.75f
-                                           + sideDb * 0.25f,
-                                       -72.0f, 6.0f),
+        meterSideDb.store (std::clamp (
+                               meterSideDb.load (std::memory_order_relaxed) * (1.0f - midAlpha)
+                                   + sideDb * midAlpha,
+                               -72.0f, 6.0f),
                            std::memory_order_relaxed);
         meterCorrelation.store (std::clamp (
-                                    meterCorrelation.load (std::memory_order_relaxed) * 0.8f
-                                        + static_cast<float> (correlation) * 0.2f,
+                                    meterCorrelation.load (std::memory_order_relaxed)
+                                        * (1.0f - correlationAlpha)
+                                        + static_cast<float> (correlation) * correlationAlpha,
                                     -1.0f, 1.0f),
                                 std::memory_order_relaxed);
     }
@@ -690,6 +748,25 @@ void PolarityAudioProcessor::flushPendingParameterChanges()
     handleUpdateNowIfNeeded();
 }
 
+void PolarityAudioProcessor::setEditorActive (bool active)
+{
+    if (active)
+    {
+        if (editorRefCount.fetch_add (1, std::memory_order_relaxed) == 0)
+            analysisResetRequested.store (true, std::memory_order_relaxed);
+    }
+    else
+    {
+        int current = editorRefCount.load (std::memory_order_relaxed);
+
+        while (current > 0
+               && ! editorRefCount.compare_exchange_weak (current, current - 1,
+                                                          std::memory_order_relaxed))
+        {
+        }
+    }
+}
+
 void PolarityAudioProcessor::resetAnalysis()
 {
     std::fill (inputAnalysisRing.begin(), inputAnalysisRing.end(), 0.0f);
@@ -715,6 +792,52 @@ void PolarityAudioProcessor::resetAnalysis()
         value.store (0.0f, std::memory_order_relaxed);
     for (auto& value : waveformOutputRms)
         value.store (0.0f, std::memory_order_relaxed);
+
+    meterMidDb.store (-72.0f, std::memory_order_relaxed);
+    meterSideDb.store (-72.0f, std::memory_order_relaxed);
+    meterCorrelation.store (0.0f, std::memory_order_relaxed);
+}
+
+void PolarityAudioProcessor::prepareSpectrumMapping (double sampleRate)
+{
+    const int maxBin = fftSize / 2 - 1;
+
+    for (int band = 0; band < spectrumBands; ++band)
+    {
+        const double centerFreq = 20.0 * std::pow (
+            1000.0, (static_cast<double> (band) + 0.5) / spectrumBands);
+        const double position = centerFreq * fftSize / sampleRate;
+
+        int lowBin = std::max (1, static_cast<int> (std::floor (position)) - 2);
+        int highBin = std::min (maxBin, static_cast<int> (std::ceil (position)) + 2);
+        lowBin = std::min (lowBin, maxBin);
+
+        if (highBin < lowBin)
+            highBin = lowBin;
+
+        int count = 0;
+        float weightSum = 0.0f;
+
+        for (int bin = lowBin; bin <= highBin && count < maxBandBins; ++bin)
+        {
+            const float distance = std::abs (
+                static_cast<float> (bin) - static_cast<float> (position));
+            const float weight = std::max (0.0f, 1.0f - distance / 3.0f);
+
+            if (weight <= 0.0f)
+                continue;
+
+            bandBinIndex[static_cast<std::size_t> (band)]
+                        [static_cast<std::size_t> (count)] = bin;
+            bandBinWeight[static_cast<std::size_t> (band)]
+                         [static_cast<std::size_t> (count)] = weight;
+            ++count;
+            weightSum += weight;
+        }
+
+        bandBinCount[static_cast<std::size_t> (band)] = count;
+        bandWeightSum[static_cast<std::size_t> (band)] = weightSum;
+    }
 }
 
 void PolarityAudioProcessor::updateAnalysis (int wetLatency, int blockSamples)
@@ -760,10 +883,10 @@ void PolarityAudioProcessor::updateAnalysis (int wetLatency, int blockSamples)
                                                                     / timeMs)))
                                 : 1.0f;
 
-    const auto computeBands = [this, sampleRate, timeAlpha] (const std::vector<float>& ring,
-                                                  int ringLength,
-                                                  int start,
-                                                  bool isInput)
+    const auto computeBands = [this, timeAlpha] (const std::vector<float>& ring,
+                                                 int ringLength,
+                                                 int start,
+                                                 bool isInput)
     {
         std::fill (analysisWork.begin(), analysisWork.end(), 0.0f);
 
@@ -775,41 +898,23 @@ void PolarityAudioProcessor::updateAnalysis (int wetLatency, int blockSamples)
         analysisFft.performFrequencyOnlyForwardTransform (analysisWork.data());
 
         std::array<float, spectrumBands> bandPower {};
+        const float normalise = static_cast<float> (fftSize) * 0.25f;
 
         for (int band = 0; band < spectrumBands; ++band)
         {
-            const double centerFreq = 20.0 * std::pow (
-                1000.0, (static_cast<double> (band) + 0.5) / spectrumBands);
-            const double position = centerFreq * fftSize / sampleRate;
-
-            const int maxBin = fftSize / 2 - 1;
-            int lowBin = std::max (1, static_cast<int> (
-                                          std::floor (position)) - 2);
-            int highBin = std::min (maxBin, static_cast<int> (
-                                          std::ceil (position)) + 2);
-
-            lowBin = std::min (lowBin, maxBin);
-
-            if (highBin < lowBin)
-                highBin = lowBin;
-
-            const float normalise = static_cast<float> (fftSize) * 0.25f;
+            const int count = bandBinCount[static_cast<std::size_t> (band)];
+            const float weightSum = bandWeightSum[static_cast<std::size_t> (band)];
             float powerSum = 0.0f;
-            float weightSum = 0.0f;
 
-            for (int bin = lowBin; bin <= highBin; ++bin)
+            for (int k = 0; k < count; ++k)
             {
-                const float distance = std::abs (
-                    static_cast<float> (bin) - static_cast<float> (position));
-                const float weight = std::max (0.0f, 1.0f - distance / 3.0f);
-
-                if (weight <= 0.0f)
-                    continue;
-
+                const int bin = bandBinIndex[static_cast<std::size_t> (band)]
+                                            [static_cast<std::size_t> (k)];
+                const float weight = bandBinWeight[static_cast<std::size_t> (band)]
+                                                  [static_cast<std::size_t> (k)];
                 const float normalized = analysisWork[static_cast<std::size_t> (bin)]
                                          / normalise;
                 powerSum += normalized * normalized * weight;
-                weightSum += weight;
             }
 
             bandPower[static_cast<std::size_t> (band)]
@@ -852,7 +957,11 @@ void PolarityAudioProcessor::updateAnalysis (int wetLatency, int blockSamples)
         computeBands (outputAnalysisRing, outputSize, spectrumOutputStart, false);
     }
 
-    if ((waveformUpdateCounter++ % 4) == 0)
+    const int blocksPerWaveformUpdate = juce::jmax (
+        1, juce::roundToInt (sampleRate
+                             / (20.0 * static_cast<double> (blockSamples))));
+
+    if ((waveformUpdateCounter++ % blocksPerWaveformUpdate) == 0)
     {
     for (int i = 0; i < waveformPoints; ++i)
     {

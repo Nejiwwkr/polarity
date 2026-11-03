@@ -105,6 +105,9 @@ void CurveEditor::changeListenerCallback (juce::ChangeBroadcaster*)
 
 void CurveEditor::timerCallback()
 {
+    if (editApplyPending)
+        applyEdits (true);
+
     repaint();
 }
 
@@ -130,8 +133,20 @@ const std::vector<polarity::dsp::CurvePoint>& CurveEditor::displayedPoints() con
     return layer == Layer::Right ? rightPoints : leftPoints;
 }
 
-void CurveEditor::applyEdits()
+void CurveEditor::applyEdits (bool force)
 {
+    const double now = juce::Time::getMillisecondCounterHiRes();
+
+    if (! force && dragging && now - lastApplyTimeMs < 40.0)
+    {
+        editApplyPending = true;
+        repaint();
+        return;
+    }
+
+    editApplyPending = false;
+    lastApplyTimeMs = now;
+
     switch (layer)
     {
         case Layer::Left:
@@ -744,7 +759,7 @@ void CurveEditor::mouseDown (const juce::MouseEvent& event)
         {
             pushUndo();
             points.erase (points.begin() + index);
-            applyEdits();
+            applyEdits (true);
         }
 
         return;
@@ -774,7 +789,7 @@ void CurveEditor::mouseDown (const juce::MouseEvent& event)
     else
         eraseNear (event.position.x);
 
-    applyEdits();
+    applyEdits (true);
 }
 
 void CurveEditor::mouseDrag (const juce::MouseEvent& event)
@@ -826,6 +841,10 @@ void CurveEditor::mouseUp (const juce::MouseEvent&)
 {
     dragging = false;
     dragPointIndex = -1;
+
+    if (editApplyPending)
+        applyEdits (true);
+
     repaint();
 }
 
@@ -841,7 +860,7 @@ void CurveEditor::mouseDoubleClick (const juce::MouseEvent& event)
 
     pushUndo();
     addOrUpdatePoint (xToFreq (event.position.x), yToAmount (event.position.y));
-    applyEdits();
+    applyEdits (true);
 }
 
 void CurveEditor::mouseMove (const juce::MouseEvent& event)

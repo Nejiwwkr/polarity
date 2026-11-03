@@ -13,6 +13,7 @@ PolarityAudioProcessorEditor::PolarityAudioProcessorEditor (PolarityAudioProcess
       waveformPanel (p),
       mixAttachment (p.getValueTreeState(), "mix", mixSlider)
 {
+    processorRef.setEditorActive (true);
     setLookAndFeel (&lookAndFeel);
 
     setSize (960, 720);
@@ -452,6 +453,7 @@ void PolarityAudioProcessorEditor::timerCallback()
 PolarityAudioProcessorEditor::~PolarityAudioProcessorEditor()
 {
     setLookAndFeel (nullptr);
+    processorRef.setEditorActive (false);
 }
 
 void PolarityAudioProcessorEditor::styleButton (juce::TextButton& button)

@@ -155,7 +155,8 @@ void InversionEngine::setKernels (const FirKernel& left, const FirKernel& right)
     unlockState();
 }
 
-void InversionEngine::process (float* const* channels, int numChannels, int numSamples)
+void InversionEngine::process (float* const* channels, int numChannels,
+                               int numSamples, bool renderOutput)
 {
     if (maxTaps == 0 || numSamples == 0)
         return;
@@ -166,6 +167,40 @@ void InversionEngine::process (float* const* channels, int numChannels, int numS
                                 static_cast<int> (channelStates.size()));
     if (count == 0)
         return;
+
+    if (! renderOutput)
+    {
+        // Keep the convolution history current while bypassed, but skip the
+        // dot products. Finish any fade so un-bypassing starts from the
+        // already-committed kernel.
+        lockState();
+        previousIndex.store (-1, std::memory_order_relaxed);
+        fading = false;
+        fadePosition = 0;
+        unlockState();
+
+        for (int channel = 0; channel < count; ++channel)
+        {
+            auto* data = channels[channel];
+
+            if (data == nullptr)
+                continue;
+
+            auto& state = channelStates[static_cast<std::size_t> (channel)];
+            auto* history = state.history.data();
+            int writePos = state.writePos;
+
+            for (int i = 0; i < numSamples; ++i)
+            {
+                history[writePos] = data[i];
+                writePos = (writePos + 1 == maxTaps) ? 0 : writePos + 1;
+            }
+
+            state.writePos = writePos;
+        }
+
+        return;
+    }
 
     const int current = currentIndex.load (std::memory_order_acquire);
     const int previous = previousIndex.load (std::memory_order_acquire);

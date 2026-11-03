@@ -26,7 +26,7 @@ Y_c(f) = (1 − A_c(f)) · X_c(f)        A_c(f) ∈ [0, 2]
       实时换核 + 60ms 交叉淡化、曲线随工程/预设保存
 - [x] M3：M/S 电平表 + 相关度、A/B 曲线槽、文件预设栏
 - [x] 画布叠加：输入/输出频谱、反相量热力图（SPECTRUM / POLARITY 开关）
-- [x] 波形对比：输入/输出填充、RMS dB 包络、冻结、6 档时间窗口
+- [x] 波形对比：输入/输出填充、RMS dB 包络、冻结、5 档时间窗口
 - [x] 浅色纸感主题：暖纸底 + 墨色 + 朱红强调；自定义扁平 LookAndFeel
 - [x] 输出 NORM / DELTA 双模式；波形 RMS / PEAK 指标可选
 - [x] 质量档：2048 / 4096 / 8192 taps（切换延迟与频率分辨率，不重新分配内存）
@@ -57,6 +57,8 @@ cmake --build Build --config Release --target Polarity_VST3 Polarity_Standalone 
 VST3 元数据把插件声明为 **Fx + EQ** 子分类（`VST3_CATEGORIES Fx EQ`，对应 `moduleinfo.json` 的 `Sub Categories: ["Fx","EQ"]`）。FL 重新扫描插件后会读取它；如果 FL 的浏览器仍按自己的 plugin database 归类，可以在 FL 里手动移动。
 
 ## 发布 1.0.0
+
+> 当前 master 为 **1.0.1（未发布）**，包含 1.0.0 之后的性能/延迟优化；1.0.1 的变更见 [CHANGELOG.md](CHANGELOG.md)。以下为已发布的 1.0.0 信息。
 
 - 版本由 `CMakeLists.txt` 的 `project(Polarity VERSION 1.0.0)` 决定，VST3 的 `moduleinfo.json` 同步为 `"Version": "1.0.0"`，组件 ID 不变，旧工程/预设可继续加载。
 - 支持并已自动测试 44.1 / 48 / 96 / 192 kHz，块大小 32 / 512 / 2048，单声道与立体声。
@@ -228,7 +230,12 @@ Processor:
   rate matrix      : PASS
   buses test       : PASS
   live switch test : PASS
-  benchmark        : 12-19x / 8-13x / 5-8x realtime (2048/4096/8192 taps, load dependent)
+  analysis gating  : PASS        (编辑器关闭时分析保持复位，打开后恢复)
+  bypass restore   : PASS        (旁路期间历史保持，恢复后无长瞬态)
+  meter ballistics : PASS        (32/512 块电平差异 0.04 dB)
+  benchmark open   : 20-26x / 14-16x / 8-10x realtime (2048/4096/8192 taps)
+  benchmark closed : ~22x realtime (4096 taps, no editor)
+  benchmark bypass : ~48x realtime (4096 taps)
   editor smoke     : PASS        (构造浅色主题 UI)
   PROCESSOR TEST   : PASS
 ```
@@ -255,8 +262,10 @@ python Tools/reference_render.py --self-test
 - **零相位 FIR**：在 N/2+1 个频点采样 `H=1−A`，补共轭对称谱，IFFT 后循环右移 N/2。延迟 `N/2` 样本，频率分辨率 `fs/N`。
 - **不加窗**：加窗会破坏 `A=0`/`A=2` 的精确性。频域采样的 Dirichlet 插值纹波是固有代价，用 taps 和曲线平滑度管理。
 - **质量档 2048 / 4096 / 8192 taps**（默认 4096）：48kHz 下延迟 21.3 / 42.7 / 85.3 ms，分辨率 23.4 / 11.7 / 5.9 Hz。引擎始终按 8192 分配环形缓冲与核槽，切换只改活动核长度和 `setLatencySamples`，音频线程无分配。
-- **卷积优化**：核与历史改为 float，内层用 SSE2 4-wide 点积（`_mm_loadu_ps`），每 256 个抽头把 float 部分和汇入 double，兼顾速度与空域精度（8192 taps 实测 null −138 dB）。48kHz/512 块下 4096 taps 约 8–13× 实时（单核，随机器负载变化），8192 taps 约 5–8×。
-- **分析优化**：频谱 FFT（16384 点 ×2）从每块计算改为约 30Hz 更新一次（按采样率/块大小自适应），时间平滑系数按实际更新间隔换算；波形仍每 4 块更新。
+- **卷积优化**：核与历史改为 float，内层用 SSE2 4-wide 点积（`_mm_loadu_ps`），每 256 个抽头把 float 部分和汇入 double，兼顾速度与空域精度（8192 taps 实测 null −138 dB）。48kHz/512 块下 4096 taps 约 14–16× 实时（单核，编辑器打开、含分析），8192 taps 约 8–10×；编辑器关闭约 22×，旁路约 48×。
+- **分析优化**：频谱 FFT（16384 点 ×2）约 30Hz 更新，波形约 20Hz 更新（均按采样率/块大小自适应），时间平滑系数按实际更新间隔换算；频带 bin/权重在 `prepareToPlay` 预计算。
+- **空闲与旁路优化**：只有编辑器打开时才做频谱/波形/M-S 分析，关闭窗口或离线渲染时为零分析开销；BYPASS 与 MIX=0 跳过湿声卷积但继续推进 FIR 历史，恢复时无陈旧历史瞬态。
+- **延迟过渡**：切换 QUALITY 时 dry 延迟长度与 wet 核淡变同步交叉淡化（60ms），避免淡变期间干湿错位。
 - **曲线模型**：控制点 + PCHIP（log 频率），20Hz/20kHz 端点固定为 0。
 - **宿主参数**：`mix`、`bypass`、`deltaOut`、`slot`、`quality`、`edge` 都是 APVTS 参数，带可读名称、数值文本与 gesture；`quality` 改变 PDC，标记为不可自动化。
 - **宿主状态**：曲线仍整体存插件状态（`CURVES`），A/B 槽通过 `slot` 参数同步；曲线编辑不进宿主撤销历史。
