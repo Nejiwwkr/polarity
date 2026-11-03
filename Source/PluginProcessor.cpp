@@ -957,9 +957,11 @@ void PolarityAudioProcessor::updateAnalysis (int wetLatency, int blockSamples)
         computeBands (outputAnalysisRing, outputSize, spectrumOutputStart, false);
     }
 
+    // Match the waveform panel's 30 Hz repaint; a lower analysis rate makes
+    // the trace visibly step even though the panel keeps redrawing.
     const int blocksPerWaveformUpdate = juce::jmax (
         1, juce::roundToInt (sampleRate
-                             / (20.0 * static_cast<double> (blockSamples))));
+                             / (30.0 * static_cast<double> (blockSamples))));
 
     if ((waveformUpdateCounter++ % blocksPerWaveformUpdate) == 0)
     {
