@@ -12,7 +12,7 @@ add_subdirectory(ThirdParty/JUCE-8.0.15/JUCE EXCLUDE_FROM_ALL)
 juce_add_plugin(Polarity
     PRODUCT_NAME            "Polarity"
     VERSION                 ${PROJECT_VERSION}
-    COMPANY_NAME            "Polarity Audio"
+    COMPANY_NAME            "Nejiwwkr"
     BUNDLE_ID               "com.polarityaudio.polarity"
     PLUGIN_MANUFACTURER_CODE "PlyA"
     PLUGIN_CODE             "Ply1"
