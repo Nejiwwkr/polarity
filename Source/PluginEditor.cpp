@@ -140,21 +140,34 @@ PolarityAudioProcessorEditor::PolarityAudioProcessorEditor (PolarityAudioProcess
         styleButton (*button);
         button->setColour (juce::TextButton::buttonColourId,
                            juce::Colours::transparentBlack);
-        button->setClickingTogglesState (true);
+        button->setClickingTogglesState (false);
         button->setRadioGroupId (104);
         addAndMakeVisible (*button);
     }
 
+    if (auto* parameter = processorRef.getValueTreeState().getParameter ("slot"))
+    {
+        slotAttachment = std::make_unique<juce::ParameterAttachment> (
+            *parameter,
+            [this] (float value)
+            {
+                const bool slotA = value < 0.5f;
+                slotAButton.setToggleState (slotA, juce::dontSendNotification);
+                slotBButton.setToggleState (! slotA, juce::dontSendNotification);
+            });
+        slotAttachment->sendInitialUpdate();
+    }
+
     slotAButton.onClick = [this]
     {
-        processorRef.setActiveSlot (0);
-        updateButtons();
+        if (slotAttachment != nullptr)
+            slotAttachment->setValueAsCompleteGesture (0.0f);
     };
 
     slotBButton.onClick = [this]
     {
-        processorRef.setActiveSlot (1);
-        updateButtons();
+        if (slotAttachment != nullptr)
+            slotAttachment->setValueAsCompleteGesture (1.0f);
     };
 
     for (auto* button : { &normButton, &deltaButton })
@@ -162,21 +175,34 @@ PolarityAudioProcessorEditor::PolarityAudioProcessorEditor (PolarityAudioProcess
         styleButton (*button);
         button->setColour (juce::TextButton::buttonColourId,
                            juce::Colours::transparentBlack);
-        button->setClickingTogglesState (true);
+        button->setClickingTogglesState (false);
         button->setRadioGroupId (103);
         addAndMakeVisible (*button);
     }
 
+    if (auto* parameter = processorRef.getValueTreeState().getParameter ("deltaOut"))
+    {
+        deltaOutAttachment = std::make_unique<juce::ParameterAttachment> (
+            *parameter,
+            [this] (float value)
+            {
+                const bool delta = value >= 0.5f;
+                normButton.setToggleState (! delta, juce::dontSendNotification);
+                deltaButton.setToggleState (delta, juce::dontSendNotification);
+            });
+        deltaOutAttachment->sendInitialUpdate();
+    }
+
     normButton.onClick = [this]
     {
-        setDeltaOut (false);
-        updateButtons();
+        if (deltaOutAttachment != nullptr)
+            deltaOutAttachment->setValueAsCompleteGesture (0.0f);
     };
 
     deltaButton.onClick = [this]
     {
-        setDeltaOut (true);
-        updateButtons();
+        if (deltaOutAttachment != nullptr)
+            deltaOutAttachment->setValueAsCompleteGesture (1.0f);
     };
 
     for (auto* button : { &layerLeft, &layerStereo, &layerRight })
@@ -334,14 +360,11 @@ PolarityAudioProcessorEditor::PolarityAudioProcessorEditor (PolarityAudioProcess
     edgeBox.addItem ("1 bin", 2);
     edgeBox.addItem ("2 bins", 3);
     edgeBox.addItem ("4 bins", 4);
-    edgeBox.setSelectedId (3, juce::dontSendNotification);
-    edgeBox.onChange = [this]
-    {
-        static constexpr int bins[] = { 0, 1, 2, 4 };
-        const int index = juce::jlimit (0, 3, edgeBox.getSelectedItemIndex());
-        processorRef.setCurveSmoothing (bins[index]);
-    };
     addAndMakeVisible (edgeBox);
+
+    if (auto* parameter = processorRef.getValueTreeState().getParameter ("edge"))
+        edgeAttachment = std::make_unique<juce::ComboBoxParameterAttachment> (
+            *parameter, edgeBox);
 
     metricCaption.setText ("METRIC", juce::dontSendNotification);
     metricCaption.setFont (juce::Font (juce::FontOptions (polarity::type::control)));
@@ -378,13 +401,11 @@ PolarityAudioProcessorEditor::PolarityAudioProcessorEditor (PolarityAudioProcess
 
     styleCombo (qualityBox);
     refreshQualityItems();
-    qualityBox.onChange = [this]
-    {
-        const int index = juce::jlimit (0, PolarityAudioProcessor::getQualityChoiceCount() - 1,
-                                        qualityBox.getSelectedItemIndex());
-        processorRef.setQuality (index);
-    };
     addAndMakeVisible (qualityBox);
+
+    if (auto* parameter = processorRef.getValueTreeState().getParameter ("quality"))
+        qualityAttachment = std::make_unique<juce::ComboBoxParameterAttachment> (
+            *parameter, qualityBox);
 
     updateButtons();
     startTimerHz (15);
@@ -406,12 +427,6 @@ void PolarityAudioProcessorEditor::styleButton (juce::TextButton& button)
     button.setColour (juce::TextButton::buttonOnColourId, polarity::theme::ink);
     button.setColour (juce::TextButton::textColourOffId, polarity::theme::ink);
     button.setColour (juce::TextButton::textColourOnId, polarity::theme::paper);
-}
-
-void PolarityAudioProcessorEditor::setDeltaOut (bool enable)
-{
-    if (auto* parameter = processorRef.getValueTreeState().getParameter ("deltaOut"))
-        parameter->setValueNotifyingHost (enable ? 1.0f : 0.0f);
 }
 
 void PolarityAudioProcessorEditor::styleCombo (juce::ComboBox& box)
@@ -453,24 +468,17 @@ void PolarityAudioProcessorEditor::refreshQualityItems()
                             i + 1);
     }
 
-    qualityBox.setSelectedId (processorRef.getQuality() + 1,
-                              juce::dontSendNotification);
+    if (qualityAttachment != nullptr)
+        qualityAttachment->sendInitialUpdate();
+    else
+        qualityBox.setSelectedId (processorRef.getQuality() + 1,
+                                  juce::dontSendNotification);
 }
 
 void PolarityAudioProcessorEditor::updateButtons()
 {
     undoButton.setEnabled (curveEditor.canUndo());
     redoButton.setEnabled (curveEditor.canRedo());
-
-    const bool slotA = processorRef.getActiveSlot() == 0;
-    slotAButton.setToggleState (slotA, juce::dontSendNotification);
-    slotBButton.setToggleState (! slotA, juce::dontSendNotification);
-
-    const auto* deltaParameter = processorRef.getValueTreeState()
-                                     .getRawParameterValue ("deltaOut");
-    const bool deltaOn = deltaParameter != nullptr && deltaParameter->load() >= 0.5f;
-    normButton.setToggleState (! deltaOn, juce::dontSendNotification);
-    deltaButton.setToggleState (deltaOn, juce::dontSendNotification);
 
     const int metricValue = static_cast<int> (
         processorRef.getValueTreeState().state.getProperty ("waveformMetric", 0));
@@ -485,10 +493,6 @@ void PolarityAudioProcessorEditor::updateButtons()
     const double rate = processorRef.getSampleRate();
     if (rate > 0.0 && std::abs (rate - qualitySampleRate) > 1.0)
         refreshQualityItems();
-
-    const int qualityId = processorRef.getQuality() + 1;
-    if (qualityBox.getSelectedId() != qualityId)
-        qualityBox.setSelectedId (qualityId, juce::dontSendNotification);
 
     spectrumButton.setToggleState (curveEditor.isSpectrumVisible(),
                                    juce::dontSendNotification);

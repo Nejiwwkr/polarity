@@ -10,11 +10,14 @@
 #include <atomic>
 #include <vector>
 
-class PolarityAudioProcessor final : public juce::AudioProcessor
+class PolarityAudioProcessor final
+    : public juce::AudioProcessor,
+      private juce::AudioProcessorValueTreeState::Listener,
+      private juce::AsyncUpdater
 {
 public:
     PolarityAudioProcessor();
-    ~PolarityAudioProcessor() override = default;
+    ~PolarityAudioProcessor() override;
 
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
     void releaseResources() override;
@@ -59,6 +62,22 @@ public:
 
     /** Changing quality changes the reported latency; the host re-syncs PDC. */
     void setQuality (int choice);
+
+    /** Applies queued host parameter changes synchronously (message thread). */
+    void flushPendingParameterChanges();
+
+    static constexpr int getEdgeChoiceCount() noexcept { return 4; }
+
+    static int getEdgeBinsForChoice (int choice) noexcept
+    {
+        constexpr int bins[] = { 0, 1, 2, 4 };
+        return bins[choice <= 0 ? 0 : (choice >= 3 ? 3 : choice)];
+    }
+
+    static constexpr int getEdgeChoiceForBins (int bins) noexcept
+    {
+        return bins <= 0 ? 0 : (bins <= 1 ? 1 : (bins <= 2 ? 2 : 3));
+    }
 
     /** channel: 0 = left, 1 = right. */
     std::vector<polarity::dsp::CurvePoint> getCurvePoints (int channel) const;
@@ -215,10 +234,16 @@ private:
     void writeCurvesToState();
     void loadCurvesFromState();
     void rebuildKernels();
-    int qualityFromState() const;
-    void applyQualityToEngine();
     void updateAnalysis (int wetLatency, int blockSamples);
     void resetAnalysis();
+
+    void parameterChanged (const juce::String& parameterID, float newValue) override;
+    void handleAsyncUpdate() override;
+    void applyPendingSettings();
+    void syncPendingFromParameters();
+    int parameterIndex (const juce::String& id, int fallback) const;
+    void writeParameterValue (const juce::String& id, int value);
+    void scheduleSettingApply();
 
     juce::AudioProcessorValueTreeState apvts;
     std::atomic<float>* mixParam = nullptr;
@@ -275,6 +300,11 @@ private:
     static constexpr int maxTaps = 8192;
     std::atomic<int> qualityChoice { 1 };
     std::atomic<int> activeLatency { 2048 };
+
+    std::atomic<int> pendingSlot { 0 };
+    std::atomic<int> pendingQuality { 1 };
+    std::atomic<int> pendingEdgeChoice { 2 };
+    std::atomic<bool> loadingState { false };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PolarityAudioProcessor)
 };

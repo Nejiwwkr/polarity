@@ -25,7 +25,6 @@ private:
     void timerCallback() override;
     void refreshPresetList();
     void refreshQualityItems();
-    void setDeltaOut (bool enable);
     static void styleButton (juce::TextButton&);
     static void styleCombo (juce::ComboBox&);
 
@@ -42,6 +41,7 @@ private:
     juce::ComboBox timeBox;
     juce::Label edgeCaption;
     juce::ComboBox edgeBox;
+    std::unique_ptr<juce::ComboBoxParameterAttachment> edgeAttachment;
 
     juce::ToggleButton bypassToggle;
     juce::AudioProcessorValueTreeState::ButtonAttachment bypassAttachment;
@@ -55,6 +55,8 @@ private:
     juce::TextButton slotBButton { "B" };
     juce::TextButton normButton { "NORM" };
     juce::TextButton deltaButton { "DELTA" };
+    std::unique_ptr<juce::ParameterAttachment> slotAttachment;
+    std::unique_ptr<juce::ParameterAttachment> deltaOutAttachment;
     juce::TextButton layerLeft { "L" };
     juce::TextButton layerStereo { "ST" };
     juce::TextButton layerRight { "R" };
@@ -79,6 +81,7 @@ private:
     juce::ComboBox metricBox;
     juce::Label qualityCaption;
     juce::ComboBox qualityBox;
+    std::unique_ptr<juce::ComboBoxParameterAttachment> qualityAttachment;
     double qualitySampleRate = 0.0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PolarityAudioProcessorEditor)

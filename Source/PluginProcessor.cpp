@@ -15,17 +15,57 @@ PolarityAudioProcessor::createParameterLayout()
         juce::ParameterID { "mix", 1 },
         "Mix",
         juce::NormalisableRange<float> (0.0f, 1.0f, 0.001f),
-        1.0f));
+        1.0f,
+        juce::AudioParameterFloatAttributes()
+            .withStringFromValueFunction ([] (float value, int)
+            {
+                return juce::String (juce::roundToInt (value * 100.0f)) + "%";
+            })
+            .withValueFromStringFunction ([] (const juce::String& text)
+            {
+                return juce::jlimit (0.0f, 1.0f, text.getFloatValue() * 0.01f);
+            })));
 
     layout.add (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { "bypass", 1 },
         "Bypass",
-        false));
+        false,
+        juce::AudioParameterBoolAttributes().withStringFromValueFunction (
+            [] (bool value, int) { return value ? "On" : "Off"; })));
 
     layout.add (std::make_unique<juce::AudioParameterBool> (
         juce::ParameterID { "deltaOut", 1 },
         "Delta Out",
-        false));
+        false,
+        juce::AudioParameterBoolAttributes()
+            .withStringFromValueFunction (
+                [] (bool value, int) { return value ? "DELTA" : "NORM"; })
+            .withValueFromStringFunction (
+                [] (const juce::String& text)
+                {
+                    return text.trim().equalsIgnoreCase ("delta");
+                })));
+
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { "slot", 1 },
+        "A/B Slot",
+        juce::StringArray { "A", "B" },
+        0,
+        juce::AudioParameterChoiceAttributes().withStringFromValueFunction (
+            [] (int index, int) { return index >= 1 ? "B" : "A"; })));
+
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { "quality", 1 },
+        "Quality",
+        juce::StringArray { "2048 taps", "4096 taps", "8192 taps" },
+        1,
+        juce::AudioParameterChoiceAttributes().withAutomatable (false)));
+
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { "edge", 1 },
+        "Edge Smoothing",
+        juce::StringArray { "Off", "1 bin", "2 bins", "4 bins" },
+        2));
 
     return layout;
 }
@@ -94,16 +134,42 @@ PolarityAudioProcessor::PolarityAudioProcessor()
         slot.right.setPoints (defaultCurvePoints());
     }
 
+    apvts.addParameterListener ("slot", this);
+    apvts.addParameterListener ("quality", this);
+    apvts.addParameterListener ("edge", this);
+
     writeCurvesToState();
     resetAnalysis();
+}
+
+PolarityAudioProcessor::~PolarityAudioProcessor()
+{
+    cancelPendingUpdate();
+    apvts.removeParameterListener ("slot", this);
+    apvts.removeParameterListener ("quality", this);
+    apvts.removeParameterListener ("edge", this);
 }
 
 void PolarityAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     currentSampleRate.store (sampleRate);
 
-    qualityChoice.store (qualityFromState());
-    const int taps = getQualityTaps (qualityChoice.load());
+    syncPendingFromParameters();
+
+    const int newSlot = pendingSlot.load();
+    const int quality = pendingQuality.load();
+    const int edgeChoice = pendingEdgeChoice.load();
+
+    {
+        const juce::ScopedLock lock (curveLock);
+        activeSlot.store (newSlot);
+        writeCurvesToState();
+    }
+
+    qualityChoice.store (quality);
+    curveSmoothingBins.store (getEdgeBinsForChoice (edgeChoice));
+
+    const int taps = getQualityTaps (quality);
 
     engine.prepare (sampleRate, maxTaps, 2);
 
@@ -383,20 +449,9 @@ void PolarityAudioProcessor::setActiveSlot (int slot)
     if (slot != 0 && slot != 1)
         return;
 
-    {
-        const juce::ScopedLock lock (curveLock);
-
-        if (activeSlot.load() == slot)
-            return;
-
-        activeSlot.store (slot);
-        writeCurvesToState();
-    }
-
-    if (currentSampleRate.load() > 0.0)
-        rebuildKernels();
-
-    curveBroadcaster.sendChangeMessage();
+    pendingSlot.store (slot);
+    writeParameterValue ("slot", slot);
+    scheduleSettingApply();
 }
 
 void PolarityAudioProcessor::writeCurvesToState()
@@ -432,7 +487,6 @@ void PolarityAudioProcessor::loadCurvesFromState()
         slot.right.setPoints (defaultCurvePoints());
     }
 
-    int active = 0;
     const auto curves = apvts.state.getChildWithName ("CURVES");
 
     if (curves.isValid())
@@ -452,8 +506,6 @@ void PolarityAudioProcessor::loadCurvesFromState()
                     readCurve (slotTree, "R", loaded[static_cast<std::size_t> (i)].right);
                 }
             }
-
-            active = static_cast<int> (curves.getProperty ("active", 0));
         }
         else
         {
@@ -464,28 +516,19 @@ void PolarityAudioProcessor::loadCurvesFromState()
         }
     }
 
-    if (active != 1)
-        active = 0;
-
     {
         const juce::ScopedLock lock (curveLock);
         slots = loaded;
-        activeSlot.store (active);
-        writeCurvesToState();
     }
 }
 
 void PolarityAudioProcessor::setCurveSmoothing (int bins)
 {
-    const int clamped = juce::jlimit (0, 16, bins);
+    const int choice = getEdgeChoiceForBins (juce::jlimit (0, 16, bins));
 
-    if (curveSmoothingBins.load() == clamped)
-        return;
-
-    curveSmoothingBins.store (clamped);
-
-    if (currentSampleRate.load() > 0.0)
-        rebuildKernels();
+    pendingEdgeChoice.store (choice);
+    writeParameterValue ("edge", choice);
+    scheduleSettingApply();
 }
 
 void PolarityAudioProcessor::rebuildKernels()
@@ -513,36 +556,134 @@ void PolarityAudioProcessor::rebuildKernels()
         polarity::dsp::designKernel (right, sampleRate, taps, edgeSmoothing));
 }
 
-int PolarityAudioProcessor::qualityFromState() const
-{
-    return juce::jlimit (0, getQualityChoiceCount() - 1,
-                         static_cast<int> (apvts.state.getProperty ("quality", 1)));
-}
-
 void PolarityAudioProcessor::setQuality (int choice)
 {
     choice = juce::jlimit (0, getQualityChoiceCount() - 1, choice);
 
-    apvts.state.setProperty ("quality", choice, nullptr);
-
-    if (qualityChoice.load (std::memory_order_relaxed) == choice)
-        return;
-
-    qualityChoice.store (choice, std::memory_order_relaxed);
-
-    if (currentSampleRate.load (std::memory_order_relaxed) <= 0.0)
-        return;
-
-    applyQualityToEngine();
+    pendingQuality.store (choice);
+    writeParameterValue ("quality", choice);
+    scheduleSettingApply();
 }
 
-void PolarityAudioProcessor::applyQualityToEngine()
+int PolarityAudioProcessor::parameterIndex (const juce::String& id, int fallback) const
 {
-    const int taps = getQualityTaps (qualityChoice.load (std::memory_order_relaxed));
+    if (auto* parameter = apvts.getParameter (id))
+        return juce::roundToInt (parameter->convertFrom0to1 (parameter->getValue()));
 
-    activeLatency.store (taps / 2, std::memory_order_relaxed);
-    setLatencySamples (taps / 2);
-    rebuildKernels();
+    return fallback;
+}
+
+void PolarityAudioProcessor::writeParameterValue (const juce::String& id, int value)
+{
+    if (auto* parameter = apvts.getParameter (id))
+    {
+        const auto normalised = parameter->convertTo0to1 (static_cast<float> (value));
+
+        if (! juce::approximatelyEqual (parameter->getValue(), normalised))
+            parameter->setValueNotifyingHost (normalised);
+    }
+}
+
+void PolarityAudioProcessor::syncPendingFromParameters()
+{
+    pendingSlot.store (juce::jlimit (0, 1, parameterIndex ("slot", 0)));
+    pendingQuality.store (juce::jlimit (0, getQualityChoiceCount() - 1,
+                                        parameterIndex ("quality", 1)));
+    pendingEdgeChoice.store (juce::jlimit (0, getEdgeChoiceCount() - 1,
+                                           parameterIndex ("edge", 2)));
+}
+
+void PolarityAudioProcessor::scheduleSettingApply()
+{
+    if (juce::MessageManager::existsAndIsCurrentThread())
+        applyPendingSettings();
+    else
+        triggerAsyncUpdate();
+}
+
+void PolarityAudioProcessor::parameterChanged (const juce::String& parameterID,
+                                               float newValue)
+{
+    if (loadingState.load (std::memory_order_acquire))
+        return;
+
+    if (parameterID == "slot")
+    {
+        const int value = juce::jlimit (0, 1, juce::roundToInt (newValue));
+
+        if (pendingSlot.exchange (value) != value)
+            triggerAsyncUpdate();
+    }
+    else if (parameterID == "quality")
+    {
+        const int value = juce::jlimit (0, getQualityChoiceCount() - 1,
+                                        juce::roundToInt (newValue));
+
+        if (pendingQuality.exchange (value) != value)
+            triggerAsyncUpdate();
+    }
+    else if (parameterID == "edge")
+    {
+        const int value = juce::jlimit (0, getEdgeChoiceCount() - 1,
+                                        juce::roundToInt (newValue));
+
+        if (pendingEdgeChoice.exchange (value) != value)
+            triggerAsyncUpdate();
+    }
+}
+
+void PolarityAudioProcessor::handleAsyncUpdate()
+{
+    applyPendingSettings();
+}
+
+void PolarityAudioProcessor::applyPendingSettings()
+{
+    const int newSlot = juce::jlimit (0, 1, pendingSlot.load());
+    const int newQuality = juce::jlimit (0, getQualityChoiceCount() - 1,
+                                         pendingQuality.load());
+    const int newEdgeBins = getEdgeBinsForChoice (pendingEdgeChoice.load());
+
+    const bool slotChanged = activeSlot.load() != newSlot;
+    const bool qualityChanged = qualityChoice.load() != newQuality;
+    const bool edgeChanged = curveSmoothingBins.load() != newEdgeBins;
+
+    if (! slotChanged && ! qualityChanged && ! edgeChanged)
+        return;
+
+    if (slotChanged)
+    {
+        const juce::ScopedLock lock (curveLock);
+        activeSlot.store (newSlot);
+        writeCurvesToState();
+    }
+
+    if (qualityChanged)
+    {
+        qualityChoice.store (newQuality);
+
+        if (currentSampleRate.load (std::memory_order_relaxed) > 0.0)
+        {
+            const int latency = getQualityTaps (newQuality) / 2;
+            activeLatency.store (latency, std::memory_order_relaxed);
+            setLatencySamples (latency);
+        }
+    }
+
+    if (edgeChanged)
+        curveSmoothingBins.store (newEdgeBins);
+
+    if (currentSampleRate.load (std::memory_order_relaxed) > 0.0)
+        rebuildKernels();
+
+    if (slotChanged)
+        curveBroadcaster.sendChangeMessage();
+}
+
+void PolarityAudioProcessor::flushPendingParameterChanges()
+{
+    jassert (juce::MessageManager::existsAndIsCurrentThread());
+    handleUpdateNowIfNeeded();
 }
 
 void PolarityAudioProcessor::resetAnalysis()
@@ -767,7 +908,16 @@ void PolarityAudioProcessor::updateAnalysis (int wetLatency, int blockSamples)
 
 void PolarityAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
-    const auto state = apvts.copyState();
+    auto state = apvts.copyState();
+
+    // The slot parameter is authoritative; patch the copied curve tree so a
+    // state saved while an async apply is pending stays self-consistent.
+    const int slot = parameterIndex ("slot", activeSlot.load());
+    auto curves = state.getChildWithName ("CURVES");
+
+    if (curves.isValid())
+        curves.setProperty ("active", slot, nullptr);
+
     const std::unique_ptr<juce::XmlElement> xml (state.createXml());
 
     if (xml != nullptr)
@@ -778,23 +928,63 @@ void PolarityAudioProcessor::setStateInformation (const void* data, int sizeInBy
 {
     const std::unique_ptr<juce::XmlElement> xml (getXmlFromBinary (data, sizeInBytes));
 
-    if (xml != nullptr && xml->hasTagName (apvts.state.getType()))
+    if (xml == nullptr || ! xml->hasTagName (apvts.state.getType()))
+        return;
+
+    // Older states predate the slot / quality parameters.
+    const bool hasSlotParameter = xml->getChildByAttribute ("id", "slot") != nullptr;
+    const bool hasQualityParameter = xml->getChildByAttribute ("id", "quality") != nullptr;
+
+    int legacySlot = 0;
+
+    if (auto* curves = xml->getChildByName ("CURVES"))
+        legacySlot = juce::jlimit (0, 1, curves->getIntAttribute ("active", 0));
+
+    const int legacyQuality = juce::jlimit (0, getQualityChoiceCount() - 1,
+                                            xml->getIntAttribute ("quality", 1));
+
+    loadingState.store (true, std::memory_order_release);
+    apvts.replaceState (juce::ValueTree::fromXml (*xml));
+
+    if (! hasSlotParameter)
+        writeParameterValue ("slot", legacySlot);
+
+    if (! hasQualityParameter)
+        writeParameterValue ("quality", legacyQuality);
+
+    loadingState.store (false, std::memory_order_release);
+
+    const int slot = hasSlotParameter ? parameterIndex ("slot", legacySlot)
+                                      : legacySlot;
+    const int quality = hasQualityParameter ? parameterIndex ("quality", legacyQuality)
+                                            : legacyQuality;
+    const int edgeChoice = parameterIndex ("edge", 2);
+    const int edgeBins = getEdgeBinsForChoice (edgeChoice);
+
+    pendingSlot.store (slot);
+    pendingQuality.store (quality);
+    pendingEdgeChoice.store (edgeChoice);
+
+    loadCurvesFromState();
+
     {
-        apvts.replaceState (juce::ValueTree::fromXml (*xml));
-        loadCurvesFromState();
-        qualityChoice.store (qualityFromState(), std::memory_order_relaxed);
-
-        if (currentSampleRate.load (std::memory_order_relaxed) > 0.0)
-        {
-            const int taps = getQualityTaps (
-                qualityChoice.load (std::memory_order_relaxed));
-            activeLatency.store (taps / 2, std::memory_order_relaxed);
-            setLatencySamples (taps / 2);
-        }
-
-        rebuildKernels();
-        curveBroadcaster.sendChangeMessage();
+        const juce::ScopedLock lock (curveLock);
+        activeSlot.store (slot);
+        qualityChoice.store (quality);
+        curveSmoothingBins.store (edgeBins);
+        writeCurvesToState();
+        apvts.state.removeProperty ("quality", nullptr);
     }
+
+    if (currentSampleRate.load (std::memory_order_relaxed) > 0.0)
+    {
+        const int latency = getQualityTaps (quality) / 2;
+        activeLatency.store (latency, std::memory_order_relaxed);
+        setLatencySamples (latency);
+    }
+
+    rebuildKernels();
+    curveBroadcaster.sendChangeMessage();
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

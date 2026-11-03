@@ -30,7 +30,9 @@ Y_c(f) = (1 − A_c(f)) · X_c(f)        A_c(f) ∈ [0, 2]
 - [x] 浅色纸感主题：暖纸底 + 墨色 + 朱红强调；自定义扁平 LookAndFeel
 - [x] 输出 NORM / DELTA 双模式；波形 RMS / PEAK 指标可选
 - [x] 质量档：2048 / 4096 / 8192 taps（切换延迟与频率分辨率，不重新分配内存）
-- [x] 离线测试：DSP 自检 + Processor 集成测试 + A/B/预设/计量/分析/质量档 + 编辑器 smoke 全部 PASS
+- [x] 宿主集成：A/B、QUALITY、EDGE 成为 VST 参数；完整参数文本/单位/gesture；
+      宿主自动化在线程安全的消息线程应用中；旧工程状态自动迁移
+- [x] 离线测试：DSP 自检 + Processor 集成测试 + A/B/预设/计量/分析/质量档/宿主参数 + 编辑器 smoke 全部 PASS
 - [ ] M4 剩余：采样率矩阵、pluginval、CPU 优化、打包
 
 当前插件默认曲线是**平直（A=0，透明）**。用 DRAW 在画布上画出反相量；ST 层会同时写入 L 和 R。
@@ -84,6 +86,25 @@ cmake --build Build --config Release --target Polarity_VST3 Polarity_Standalone 
   `%APPDATA%\Polarity\Presets`（XML），包含 A/B 两套曲线、当前槽、mix/bypass。
 - 曲线随工程/预设保存；宿主恢复状态时编辑器自动刷新。
 - 拖动曲线时后台实时重建 FIR，引擎用 60ms 交叉淡化换核，不会爆音。
+
+## 宿主集成（FL Studio）
+
+FL 的“编辑参数”、自动化和提示面板只认真正的 VST 参数。插件暴露：
+
+| 参数 | 文本 | 自动化 |
+|---|---|---|
+| Mix | `0%…100%` | 是 |
+| Bypass | `On` / `Off` | 是 |
+| Delta Out | `NORM` / `DELTA` | 是 |
+| A/B Slot | `A` / `B` | 是 |
+| Quality | `2048 taps` / `4096 taps` / `8192 taps` | **否**（改变 PDC） |
+| Edge Smoothing | `Off` / `1 bin` / `2 bins` / `4 bins` | 是 |
+
+- 所有参数都带 VST3 的 title / value text / units，FL 参数列表与提示面板显示的是这些文本。
+- NORM/DELTA、A/B、QUALITY、EDGE 的控件用 `ParameterAttachment` / `ComboBoxParameterAttachment` 驱动，选择时自动发送 `beginEdit → performEdit → endEdit`，因此 FL 的撤销/重做能覆盖这些编辑；MIX/BYPASS 由 JUCE attachment 处理。
+- 宿主在音频线程改参数时，处理器只写原子 pending 值并 `triggerAsyncUpdate()`；真正的换核、`setLatencySamples` 和状态写入都在消息线程完成，连续自动化会被合并。
+- **限制**：自由绘制的曲线、SPECTRUM/POLARITY、SLOPE/SMOOTH/TIME、WAVE/METRIC 不是宿主参数，因此不会出现在 FL 的自动化/提示面板里，曲线仍用插件内 UNDO/REDO。这是 VST3 没有通用“内部状态撤销/提示”通道导致的。
+- QUALITY 在 FL 中可能显示为不可自动化；手动修改会改变延迟，宿主可能重新同步播放位置。旧工程加载时会把原来的 `quality` 状态属性与 `CURVES.active` 迁移到新参数。
 
 ## 界面
 
@@ -144,6 +165,8 @@ Processor:
   quality 4096     : lat 2048  null -96.2 dB  dry 0.0e+00
   quality 8192     : lat 4096  null -149.7 dB  dry 0.0e+00
   quality test     : PASS        (三档延迟、null、旁通延迟对齐、状态保存)
+  host params      : meta PASS slot PASS quality PASS edge PASS state PASS legacy PASS
+  host params test : PASS        (参数元数据、宿主自动化、状态往返、旧状态迁移)
   editor smoke     : PASS        (构造浅色主题 UI)
   PROCESSOR TEST   : PASS
 ```
@@ -170,7 +193,8 @@ python Tools/reference_render.py --self-test
 - **不加窗**：加窗会破坏 `A=0`/`A=2` 的精确性。频域采样的 Dirichlet 插值纹波是固有代价，用 taps 和曲线平滑度管理。
 - **质量档 2048 / 4096 / 8192 taps**（默认 4096）：48kHz 下延迟 21.3 / 42.7 / 85.3 ms，分辨率 23.4 / 11.7 / 5.9 Hz。引擎始终按 8192 分配环形缓冲与核槽，切换只改活动核长度和 `setLatencySamples`，音频线程无分配。
 - **曲线模型**：控制点 + PCHIP（log 频率），20Hz/20kHz 端点固定为 0。
-- **状态规划**：曲线整体存插件状态，仅 bypass / mix / L、R 总反相量做可自动化宏参数。
+- **宿主参数**：`mix`、`bypass`、`deltaOut`、`slot`、`quality`、`edge` 都是 APVTS 参数，带可读名称、数值文本与 gesture；`quality` 改变 PDC，标记为不可自动化。
+- **宿主状态**：曲线仍整体存插件状态（`CURVES`），A/B 槽通过 `slot` 参数同步；曲线编辑不进宿主撤销历史。
 
 完整方案见：`C:\Users\lenovo\.claude\plans\vst-left-stereo-right-eq-mid-side-mid-s-shimmering-deer.md`。
 

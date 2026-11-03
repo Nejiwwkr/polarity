@@ -573,8 +573,11 @@ bool testQuality (PolarityAudioProcessor& processor)
     const auto normal = run (1);
     const auto high = run (2);
 
-    const int storedQuality = static_cast<int> (
-        processor.getValueTreeState().state.getProperty ("quality", -1));
+    auto* qualityParameter = processor.getValueTreeState().getParameter ("quality");
+    const int storedQuality = qualityParameter != nullptr
+                                  ? juce::roundToInt (qualityParameter->convertFrom0to1 (
+                                        qualityParameter->getValue()))
+                                  : -1;
 
     processor.setQuality (1);
     processor.prepareToPlay (kSampleRate, blockSize);
@@ -606,6 +609,123 @@ bool testQuality (PolarityAudioProcessor& processor)
         && high.dryError < 1.0e-6
         && storedQuality == 2
         && restoredLatency == 2048;
+}
+
+bool testHostParameters (PolarityAudioProcessor& processor)
+{
+    auto& apvts = processor.getValueTreeState();
+
+    auto* mix = apvts.getParameter ("mix");
+    auto* delta = apvts.getParameter ("deltaOut");
+    auto* slot = apvts.getParameter ("slot");
+    auto* quality = apvts.getParameter ("quality");
+    auto* edge = apvts.getParameter ("edge");
+
+    if (mix == nullptr || delta == nullptr || slot == nullptr
+        || quality == nullptr || edge == nullptr)
+        return false;
+
+    // Call getText through the base interface: the derived overrides are private.
+    const bool metadataOk = mix->getName (128) == "Mix"
+        && mix->getText (mix->convertTo0to1 (0.5f), 128) == "50%"
+        && delta->getText (1.0f, 128) == "DELTA"
+        && delta->getText (0.0f, 128) == "NORM"
+        && quality->getText (quality->convertTo0to1 (2.0f), 128) == "8192 taps"
+        && ! quality->isAutomatable()
+        && slot->isAutomatable()
+        && edge->isAutomatable();
+
+    const auto setChoice = [] (juce::RangedAudioParameter& parameter, int index)
+    {
+        parameter.beginChangeGesture();
+        parameter.setValueNotifyingHost (
+            parameter.convertTo0to1 (static_cast<float> (index)));
+        parameter.endChangeGesture();
+    };
+
+    setChoice (*slot, 1);
+    processor.flushPendingParameterChanges();
+    const bool slotApplied = processor.getActiveSlot() == 1;
+
+    setChoice (*quality, 2);
+    processor.flushPendingParameterChanges();
+    const bool qualityApplied = processor.getQuality() == 2
+                                && processor.getLatencySamples() == 4096;
+
+    setChoice (*edge, 0);
+    processor.flushPendingParameterChanges();
+    const bool edgeApplied = processor.getCurveSmoothing() == 0;
+
+    // State round-trip with the new parameters.
+    processor.setActiveSlot (1);
+    processor.setQuality (2);
+    processor.setCurveSmoothing (4);
+    processor.prepareToPlay (kSampleRate, blockSize);
+
+    juce::MemoryBlock saved;
+    processor.getStateInformation (saved);
+
+    PolarityAudioProcessor restored;
+    restored.setPlayConfigDetails (2, 2, static_cast<int> (kSampleRate), blockSize);
+    restored.setStateInformation (saved.getData(), static_cast<int> (saved.getSize()));
+    restored.prepareToPlay (kSampleRate, blockSize);
+
+    const bool stateOk = restored.getActiveSlot() == 1
+        && restored.getQuality() == 2
+        && restored.getCurveSmoothing() == 4
+        && restored.getLatencySamples() == 4096;
+
+    // Legacy state: no slot/quality/edge PARAM children, old root quality
+    // property, and the active slot stored only in CURVES.
+    bool legacyOk = false;
+
+    if (auto xml = juce::AudioProcessor::getXmlFromBinary (
+            saved.getData(), static_cast<int> (saved.getSize())))
+    {
+        for (int i = xml->getNumChildElements(); --i >= 0;)
+        {
+            auto* child = xml->getChildElement (i);
+            const auto id = child->getStringAttribute ("id");
+
+            if (id == "slot" || id == "quality" || id == "edge")
+                xml->removeChildElement (child, true);
+        }
+
+        xml->setAttribute ("quality", 2);
+
+        if (auto* curves = xml->getChildByName ("CURVES"))
+            curves->setAttribute ("active", 1);
+
+        juce::MemoryBlock legacy;
+        juce::AudioProcessor::copyXmlToBinary (*xml, legacy);
+
+        PolarityAudioProcessor migrated;
+        migrated.setPlayConfigDetails (2, 2, static_cast<int> (kSampleRate), blockSize);
+        migrated.setStateInformation (legacy.getData(),
+                                      static_cast<int> (legacy.getSize()));
+        migrated.prepareToPlay (kSampleRate, blockSize);
+
+        legacyOk = migrated.getActiveSlot() == 1
+            && migrated.getQuality() == 2
+            && migrated.getCurveSmoothing() == 2
+            && migrated.getLatencySamples() == 4096;
+    }
+
+    std::printf ("host params      : meta %s slot %s quality %s edge %s state %s legacy %s\n",
+                 metadataOk ? "PASS" : "FAIL",
+                 slotApplied ? "PASS" : "FAIL",
+                 qualityApplied ? "PASS" : "FAIL",
+                 edgeApplied ? "PASS" : "FAIL",
+                 stateOk ? "PASS" : "FAIL",
+                 legacyOk ? "PASS" : "FAIL");
+
+    processor.setActiveSlot (0);
+    processor.setQuality (1);
+    processor.setCurveSmoothing (2);
+    processor.prepareToPlay (kSampleRate, blockSize);
+
+    return metadataOk && slotApplied && qualityApplied && edgeApplied
+        && stateOk && legacyOk;
 }
 } // namespace
 
@@ -646,6 +766,7 @@ int main()
 
     const bool deltaOk = testDeltaMode (processor);
     const bool qualityOk = testQuality (processor);
+    const bool hostParametersOk = testHostParameters (processor);
 
     processor.setCurvePoints (0, lowNullCurve());
     processor.setCurvePoints (1, highNullCurve());
@@ -678,6 +799,7 @@ int main()
                  analysis.maxWave);
     std::printf ("analysis test    : %s\n", analysisOk ? "PASS" : "FAIL");
     std::printf ("quality test     : %s\n", qualityOk ? "PASS" : "FAIL");
+    std::printf ("host params test : %s\n", hostParametersOk ? "PASS" : "FAIL");
     std::printf ("editor smoke     : %s\n", editorOk ? "PASS" : "FAIL");
 
     const bool ok = latency == 2048
@@ -694,6 +816,7 @@ int main()
                  && analysisOk
                  && deltaOk
                  && qualityOk
+                 && hostParametersOk
                  && editorOk;
 
     std::printf ("PROCESSOR TEST   : %s\n", ok ? "PASS" : "FAIL");
