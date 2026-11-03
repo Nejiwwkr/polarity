@@ -133,3 +133,7 @@ powershell -ExecutionPolicy Bypass -File Tools\run_pluginval.ps1
 - [Chinese technical documentation](Docs/README-zh.md) — design, implementation, build, tests and release details.
 - [Changelog](CHANGELOG.md)
 - [Releases](https://github.com/Nejiwwkr/polarity/releases)
+
+## License
+
+Polarity is released under the [GNU General Public License v3.0](LICENSE).
