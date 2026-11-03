@@ -33,7 +33,8 @@ Y_c(f) = (1 − A_c(f)) · X_c(f)        A_c(f) ∈ [0, 2]
 - [x] 宿主集成：A/B、QUALITY、EDGE 成为 VST 参数；完整参数文本/单位/gesture；
       宿主自动化在线程安全的消息线程应用中；旧工程状态自动迁移
 - [x] 离线测试：DSP 自检 + Processor 集成测试 + A/B/预设/计量/分析/质量档/宿主参数 + 编辑器 smoke 全部 PASS
-- [ ] M4 剩余：采样率矩阵、pluginval、CPU 优化、打包
+- [x] CPU 优化：SSE2 浮点卷积（分块 double 累加）、频谱 FFT 限到约 30Hz、裸指针音频循环
+- [ ] M4 剩余：采样率矩阵、pluginval、打包
 
 当前插件默认曲线是**平直（A=0，透明）**。用 DRAW 在画布上画出反相量；ST 层会同时写入 L 和 R。
 
@@ -164,8 +165,9 @@ Processor:
   delta test       : PASS
   quality 2048     : lat 1024  null -85.1 dB  dry 0.0e+00
   quality 4096     : lat 2048  null -96.2 dB  dry 0.0e+00
-  quality 8192     : lat 4096  null -149.7 dB  dry 0.0e+00
+  quality 8192     : lat 4096  null -138.3 dB  dry 0.0e+00
   quality test     : PASS        (三档延迟、null、旁通延迟对齐、状态保存)
+  benchmark        : 18.5x / 12.7x / 7.7x realtime (2048/4096/8192 taps)
   host params      : meta PASS slot PASS quality PASS edge PASS state PASS legacy PASS
   host params test : PASS        (参数元数据、宿主自动化、状态往返、旧状态迁移)
   editor smoke     : PASS        (构造浅色主题 UI)
@@ -193,6 +195,8 @@ python Tools/reference_render.py --self-test
 - **零相位 FIR**：在 N/2+1 个频点采样 `H=1−A`，补共轭对称谱，IFFT 后循环右移 N/2。延迟 `N/2` 样本，频率分辨率 `fs/N`。
 - **不加窗**：加窗会破坏 `A=0`/`A=2` 的精确性。频域采样的 Dirichlet 插值纹波是固有代价，用 taps 和曲线平滑度管理。
 - **质量档 2048 / 4096 / 8192 taps**（默认 4096）：48kHz 下延迟 21.3 / 42.7 / 85.3 ms，分辨率 23.4 / 11.7 / 5.9 Hz。引擎始终按 8192 分配环形缓冲与核槽，切换只改活动核长度和 `setLatencySamples`，音频线程无分配。
+- **卷积优化**：核与历史改为 float，内层用 SSE2 4-wide 点积（`_mm_loadu_ps`），每 256 个抽头把 float 部分和汇入 double，兼顾速度与空域精度（8192 taps 实测 null −138 dB）。48kHz/512 块下 4096 taps 约 12.7× 实时（单核），8192 taps 约 7.7×。
+- **分析优化**：频谱 FFT（16384 点 ×2）从每块计算改为约 30Hz 更新一次（按采样率/块大小自适应），时间平滑系数按实际更新间隔换算；波形仍每 4 块更新。
 - **曲线模型**：控制点 + PCHIP（log 频率），20Hz/20kHz 端点固定为 0。
 - **宿主参数**：`mix`、`bypass`、`deltaOut`、`slot`、`quality`、`edge` 都是 APVTS 参数，带可读名称、数值文本与 gesture；`quality` 改变 PDC，标记为不可自动化。
 - **宿主状态**：曲线仍整体存插件状态（`CURVES`），A/B 槽通过 `slot` 参数同步；曲线编辑不进宿主撤销历史。

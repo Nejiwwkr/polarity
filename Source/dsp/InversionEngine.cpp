@@ -4,6 +4,11 @@
 #include <cmath>
 #include <stdexcept>
 
+#if defined(_M_X64) || defined(__SSE2__)
+ #include <emmintrin.h>
+ #define POLARITY_HAS_SSE2 1
+#endif
+
 namespace polarity::dsp
 {
 
@@ -40,14 +45,14 @@ void InversionEngine::prepare (double newSampleRate, int maxTapsToUse, int numCh
 
     for (auto& state : channelStates)
     {
-        state.history.assign (static_cast<std::size_t> (maxTaps), 0.0);
+        state.history.assign (static_cast<std::size_t> (maxTaps), 0.0f);
         state.writePos = 0;
     }
 
     for (auto& pair : kernels)
     {
-        pair.left.assign (static_cast<std::size_t> (maxTaps), 0.0);
-        pair.right.assign (static_cast<std::size_t> (maxTaps), 0.0);
+        pair.left.assign (static_cast<std::size_t> (maxTaps), 0.0f);
+        pair.right.assign (static_cast<std::size_t> (maxTaps), 0.0f);
         pair.taps = 0;
     }
 
@@ -60,7 +65,7 @@ void InversionEngine::reset()
 {
     for (auto& state : channelStates)
     {
-        std::fill (state.history.begin(), state.history.end(), 0.0);
+        std::fill (state.history.begin(), state.history.end(), 0.0f);
         state.writePos = 0;
     }
 }
@@ -78,10 +83,10 @@ void InversionEngine::setKernelsImmediate (const FirKernel& left, const FirKerne
 
     for (int i = 0; i < taps; ++i)
     {
-        pair.left[static_cast<std::size_t> (i)]
-            = left.taps[static_cast<std::size_t> (taps - 1 - i)];
-        pair.right[static_cast<std::size_t> (i)]
-            = right.taps[static_cast<std::size_t> (taps - 1 - i)];
+        pair.left[static_cast<std::size_t> (i)] = static_cast<float> (
+            left.taps[static_cast<std::size_t> (taps - 1 - i)]);
+        pair.right[static_cast<std::size_t> (i)] = static_cast<float> (
+            right.taps[static_cast<std::size_t> (taps - 1 - i)]);
     }
 
     pair.taps = taps;
@@ -95,7 +100,7 @@ void InversionEngine::setKernelsImmediate (const FirKernel& left, const FirKerne
 
     for (auto& state : channelStates)
     {
-        std::fill (state.history.begin(), state.history.end(), 0.0);
+        std::fill (state.history.begin(), state.history.end(), 0.0f);
         state.writePos = 0;
     }
 
@@ -137,10 +142,10 @@ void InversionEngine::setKernels (const FirKernel& left, const FirKernel& right)
 
     for (int i = 0; i < taps; ++i)
     {
-        pair.left[static_cast<std::size_t> (i)]
-            = left.taps[static_cast<std::size_t> (taps - 1 - i)];
-        pair.right[static_cast<std::size_t> (i)]
-            = right.taps[static_cast<std::size_t> (taps - 1 - i)];
+        pair.left[static_cast<std::size_t> (i)] = static_cast<float> (
+            left.taps[static_cast<std::size_t> (taps - 1 - i)]);
+        pair.right[static_cast<std::size_t> (i)] = static_cast<float> (
+            right.taps[static_cast<std::size_t> (taps - 1 - i)]);
     }
 
     pair.taps = taps;
@@ -214,24 +219,64 @@ void InversionEngine::process (float* const* channels, int numChannels, int numS
     }
 }
 
-double InversionEngine::dotProduct (const std::vector<double>& history,
+namespace
+{
+float dotProductRange (const float* samples, const float* kernel, int length) noexcept
+{
+    double sum = 0.0;
+    int k = 0;
+
+   #if defined(POLARITY_HAS_SSE2)
+    // Accumulate in short float chunks (kept wide by SIMD) and add each chunk
+    // to a double. This keeps ~-110 dB of numerical headroom without giving up
+    // vectorisation.
+    constexpr int chunkSize = 256;
+
+    while (k < length)
+    {
+        const int chunk = std::min (chunkSize, length - k);
+        __m128 acc = _mm_setzero_ps();
+        int j = 0;
+
+        for (; j + 4 <= chunk; j += 4)
+            acc = _mm_add_ps (acc,
+                              _mm_mul_ps (_mm_loadu_ps (samples + k + j),
+                                          _mm_loadu_ps (kernel + k + j)));
+
+        float partial[4];
+        _mm_storeu_ps (partial, acc);
+        sum += static_cast<double> (partial[0]) + partial[1] + partial[2] + partial[3];
+
+        for (; j < chunk; ++j)
+            sum += static_cast<double> (samples[k + j]) * kernel[k + j];
+
+        k += chunk;
+    }
+   #else
+    for (; k < length; ++k)
+        sum += static_cast<double> (samples[k]) * kernel[k];
+   #endif
+
+    return static_cast<float> (sum);
+}
+} // namespace
+
+float InversionEngine::dotProduct (const std::vector<float>& history,
                                    int writePos,
                                    int ringSize,
                                    int taps,
-                                   const double* kernel) noexcept
+                                   const float* kernel) noexcept
 {
     // Kernel[i] is tap[taps - 1 - i], so multiplying forwards from the oldest
     // sample used by this kernel realises the causal convolution.
     const int start = (writePos + 1 + ringSize - taps) % ringSize;
     const int firstLength = std::min (taps, ringSize - start);
+    const auto* samples = history.data();
 
-    double sum = 0.0;
+    float sum = dotProductRange (samples + start, kernel, firstLength);
 
-    for (int k = 0; k < firstLength; ++k)
-        sum += kernel[k] * history[static_cast<std::size_t> (start + k)];
-
-    for (int k = firstLength; k < taps; ++k)
-        sum += kernel[k] * history[static_cast<std::size_t> (k - firstLength)];
+    if (firstLength < taps)
+        sum += dotProductRange (samples, kernel + firstLength, taps - firstLength);
 
     return sum;
 }
@@ -240,9 +285,9 @@ void InversionEngine::processChannel (ChannelState& state,
                                      float* data,
                                      int numSamples,
                                      int ringSize,
-                                     const double* currentKernel,
+                                     const float* currentKernel,
                                      int currentTaps,
-                                     const double* previousKernel,
+                                     const float* previousKernel,
                                      int previousTaps,
                                      int fadeStart,
                                      bool blockFading) noexcept
@@ -252,10 +297,10 @@ void InversionEngine::processChannel (ChannelState& state,
 
     for (int i = 0; i < numSamples; ++i)
     {
-        history[writePos] = static_cast<double> (data[i]);
+        history[writePos] = data[i];
 
-        double wet = dotProduct (state.history, writePos, ringSize,
-                                 currentTaps, currentKernel);
+        float wet = dotProduct (state.history, writePos, ringSize,
+                                currentTaps, currentKernel);
 
         if (blockFading && previousKernel != nullptr && previousTaps > 0)
         {
@@ -263,16 +308,16 @@ void InversionEngine::processChannel (ChannelState& state,
 
             if (position < fadeLength)
             {
-                const double t = static_cast<double> (position)
-                                 / static_cast<double> (fadeLength);
-                const double previousWet = dotProduct (state.history, writePos,
-                                                       ringSize, previousTaps,
-                                                       previousKernel);
-                wet = previousWet * (1.0 - t) + wet * t;
+                const float t = static_cast<float> (position)
+                                / static_cast<float> (fadeLength);
+                const float previousWet = dotProduct (state.history, writePos,
+                                                      ringSize, previousTaps,
+                                                      previousKernel);
+                wet = previousWet * (1.0f - t) + wet * t;
             }
         }
 
-        data[i] = static_cast<float> (wet);
+        data[i] = wet;
         writePos = (writePos + 1 == ringSize) ? 0 : writePos + 1;
     }
 

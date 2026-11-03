@@ -44,30 +44,30 @@ public:
 private:
     struct ChannelState
     {
-        std::vector<double> history;
+        std::vector<float> history;
         int writePos = 0;
     };
 
     struct KernelPair
     {
-        std::vector<double> left;   // time-reversed taps
-        std::vector<double> right;
+        std::vector<float> left;   // time-reversed taps
+        std::vector<float> right;
         int taps = 0;
     };
 
-    static double dotProduct (const std::vector<double>& history,
-                              int writePos,
-                              int ringSize,
-                              int taps,
-                              const double* kernel) noexcept;
+    static float dotProduct (const std::vector<float>& history,
+                             int writePos,
+                             int ringSize,
+                             int taps,
+                             const float* kernel) noexcept;
 
     void processChannel (ChannelState& state,
                          float* data,
                          int numSamples,
                          int ringSize,
-                         const double* currentKernel,
+                         const float* currentKernel,
                          int currentTaps,
-                         const double* previousKernel,
+                         const float* previousKernel,
                          int previousTaps,
                          int fadeStart,
                          bool blockFading) noexcept;

@@ -611,6 +611,48 @@ bool testQuality (PolarityAudioProcessor& processor)
         && restoredLatency == 2048;
 }
 
+double benchmarkProcessing (PolarityAudioProcessor& processor, double seconds,
+                            int quality = 1)
+{
+    if (auto* mix = processor.getValueTreeState().getParameter ("mix"))
+        mix->setValueNotifyingHost (1.0f);
+
+    if (auto* bypass = processor.getValueTreeState().getParameter ("bypass"))
+        bypass->setValueNotifyingHost (0.0f);
+
+    if (auto* delta = processor.getValueTreeState().getParameter ("deltaOut"))
+        delta->setValueNotifyingHost (0.0f);
+
+    processor.setCurves (lowNullCurve(), flatCurve());
+    processor.setQuality (quality);
+    processor.prepareToPlay (kSampleRate, blockSize);
+
+    std::mt19937 rng (11);
+    std::normal_distribution<float> noise (0.0f, 0.1f);
+    juce::AudioBuffer<float> source (2, blockSize);
+
+    for (int channel = 0; channel < 2; ++channel)
+        for (int i = 0; i < blockSize; ++i)
+            source.setSample (channel, i, noise (rng));
+
+    juce::AudioBuffer<float> buffer (2, blockSize);
+    juce::MidiBuffer midi;
+    const int blocks = static_cast<int> (seconds * kSampleRate / blockSize);
+    const double start = juce::Time::getMillisecondCounterHiRes();
+
+    for (int block = 0; block < blocks; ++block)
+    {
+        for (int channel = 0; channel < 2; ++channel)
+            buffer.copyFrom (channel, 0, source, channel, 0, blockSize);
+
+        processor.processBlock (buffer, midi);
+    }
+
+    const double elapsed = juce::Time::getMillisecondCounterHiRes() - start;
+
+    return elapsed > 0.0 ? (seconds * 1000.0) / elapsed : 0.0;
+}
+
 bool testHostParameters (PolarityAudioProcessor& processor)
 {
     auto& apvts = processor.getValueTreeState();
@@ -768,6 +810,12 @@ int main()
     const bool qualityOk = testQuality (processor);
     const bool hostParametersOk = testHostParameters (processor);
 
+    const double benchLow = benchmarkProcessing (processor, 1.0, 0);
+    const double benchNormal = benchmarkProcessing (processor, 1.0, 1);
+    const double benchHigh = benchmarkProcessing (processor, 1.0, 2);
+    processor.setQuality (1);
+    processor.prepareToPlay (kSampleRate, blockSize);
+
     processor.setCurvePoints (0, lowNullCurve());
     processor.setCurvePoints (1, highNullCurve());
 
@@ -800,6 +848,8 @@ int main()
     std::printf ("analysis test    : %s\n", analysisOk ? "PASS" : "FAIL");
     std::printf ("quality test     : %s\n", qualityOk ? "PASS" : "FAIL");
     std::printf ("host params test : %s\n", hostParametersOk ? "PASS" : "FAIL");
+    std::printf ("benchmark        : %.1fx / %.1fx / %.1fx realtime (2048/4096/8192 taps)\n",
+                 benchLow, benchNormal, benchHigh);
     std::printf ("editor smoke     : %s\n", editorOk ? "PASS" : "FAIL");
 
     const bool ok = latency == 2048

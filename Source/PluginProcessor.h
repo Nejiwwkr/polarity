@@ -275,6 +275,7 @@ private:
     int outputAnalysisWrite = 0;
     std::atomic<float> waveformWindowMs { 1000.0f };
     int waveformUpdateCounter = 0;
+    int spectrumUpdateCounter = 0;
     std::atomic<int> spectrumSmoothingRadius { 2 };
     std::atomic<float> spectrumTimeSmoothingMs { 200.0f };
     std::atomic<int> curveSmoothingBins { 2 };

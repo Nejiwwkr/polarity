@@ -205,6 +205,7 @@ void PolarityAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlo
     maxWaveformSamples = std::max (1024, static_cast<int> (
                                           std::lround (sampleRate * 5.0)));
     waveformUpdateCounter = 0;
+    spectrumUpdateCounter = 0;
 
     inputAnalysisRing.assign (
         static_cast<std::size_t> (maxWaveformSamples + maxTaps / 2), 0.0f);
@@ -292,12 +293,12 @@ void PolarityAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
         int writeIndex = storedIndex;
         int readIndex = (storedIndex + delaySize - latency) % delaySize;
+        const auto* dryInput = dryCopy.getReadPointer (channel);
 
         for (int sample = 0; sample < numSamples; ++sample)
         {
             const float dry = delay[static_cast<std::size_t> (readIndex)];
-            delay[static_cast<std::size_t> (writeIndex)]
-                = dryCopy.getSample (channel, sample);
+            delay[static_cast<std::size_t> (writeIndex)] = dryInput[sample];
 
             writeIndex = (writeIndex + 1 == delaySize) ? 0 : writeIndex + 1;
             readIndex = (readIndex + 1 == delaySize) ? 0 : readIndex + 1;
@@ -373,18 +374,21 @@ void PolarityAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer,
 
         if (ringSize > 0 && outputSize > 0)
         {
+            const auto* dryLeft = dryCopy.getReadPointer (0);
+            const auto* dryRight = processedChannels > 1 ? dryCopy.getReadPointer (1)
+                                                         : dryLeft;
+            const auto* outLeft = buffer.getReadPointer (0);
+            const auto* outRight = processedChannels > 1 ? buffer.getReadPointer (1)
+                                                         : outLeft;
+
             for (int i = 0; i < numSamples; ++i)
             {
-                const float inL = dryCopy.getSample (0, i);
-                const float inR = processedChannels > 1 ? dryCopy.getSample (1, i) : inL;
                 inputAnalysisRing[static_cast<std::size_t> (inputAnalysisWrite)]
-                    = 0.5f * (inL + inR);
+                    = 0.5f * (dryLeft[i] + dryRight[i]);
                 inputAnalysisWrite = (inputAnalysisWrite + 1) % ringSize;
 
-                const float outL = buffer.getSample (0, i);
-                const float outR = processedChannels > 1 ? buffer.getSample (1, i) : outL;
                 outputAnalysisRing[static_cast<std::size_t> (outputAnalysisWrite)]
-                    = 0.5f * (outL + outR);
+                    = 0.5f * (outLeft[i] + outRight[i]);
                 outputAnalysisWrite = (outputAnalysisWrite + 1) % outputSize;
             }
 
@@ -738,13 +742,21 @@ void PolarityAudioProcessor::updateAnalysis (int wetLatency, int blockSamples)
     const int waveformOutputStart = ((outputAnalysisWrite - windowSamples)
                                      % outputSize + outputSize) % outputSize;
 
+    // The FFT pair is the expensive part; ~30 Hz is plenty for a display and
+    // avoids doing two 16384-point transforms per audio block.
+    const int blocksPerSpectrumUpdate = juce::jmax (
+        1, juce::roundToInt (sampleRate
+                             / (30.0 * static_cast<double> (blockSamples))));
+    const bool updateSpectrum = (spectrumUpdateCounter++ % blocksPerSpectrumUpdate) == 0;
+
     const double timeMs = static_cast<double> (
         spectrumTimeSmoothingMs.load (std::memory_order_relaxed));
     const double blockSeconds = static_cast<double> (blockSamples) / sampleRate;
+    const double updateSeconds = blockSeconds * blocksPerSpectrumUpdate;
     const float timeAlpha = timeMs > 0.0
                                 ? static_cast<float> (
                                       juce::jlimit (0.001, 1.0,
-                                                    1.0 - std::exp (-blockSeconds * 1000.0
+                                                    1.0 - std::exp (-updateSeconds * 1000.0
                                                                     / timeMs)))
                                 : 1.0f;
 
@@ -834,8 +846,11 @@ void PolarityAudioProcessor::updateAnalysis (int wetLatency, int blockSamples)
         }
     };
 
-    computeBands (inputAnalysisRing, ringSize, spectrumInputStart, true);
-    computeBands (outputAnalysisRing, outputSize, spectrumOutputStart, false);
+    if (updateSpectrum)
+    {
+        computeBands (inputAnalysisRing, ringSize, spectrumInputStart, true);
+        computeBands (outputAnalysisRing, outputSize, spectrumOutputStart, false);
+    }
 
     if ((waveformUpdateCounter++ % 4) == 0)
     {
