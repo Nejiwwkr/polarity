@@ -29,7 +29,7 @@ Draw separate curves for the left and right channels, or link them together with
 
 ## Download & install
 
-The latest tagged release is **v1.0.0**. The `master` branch also contains the **1.1.0** engine upgrade (partitioned FFT convolution, 1024-tap tier, M/S routing) that is not tagged yet.
+The latest release is **v1.1.0**.
 
 1. Download `Polarity-<version>-win64.zip` from the [Releases page](https://github.com/Nejiwwkr/polarity/releases).
 2. Extract it anywhere.

@@ -63,7 +63,7 @@ VST3 元数据把插件声明为 **Fx + EQ** 子分类（`VST3_CATEGORIES Fx EQ`
 
 ## 发布 1.0.0
 
-> 当前 master 为 **1.1.0（未发布）**，包含分区 FFT 卷积、1024 档与 M/S 路由；变更见 [CHANGELOG.md](../CHANGELOG.md)。以下延迟与版本信息已按 1.1.0 更新。
+> 当前版本为 **1.1.0**（2026-11-05 发布），包含分区 FFT 卷积、1024 档、M/S 路由与手感/UI 修正；变更见 [CHANGELOG.md](../CHANGELOG.md)。
 
 - 版本由 `CMakeLists.txt` 的 `project(Polarity VERSION 1.1.0)` 决定，VST3 的 `moduleinfo.json` 同步，组件 ID 不变，旧工程/预设可继续加载。
 - 支持并已自动测试 44.1 / 48 / 96 / 192 kHz，块大小 32 / 512 / 2048，单声道与立体声。
