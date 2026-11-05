@@ -672,6 +672,18 @@ int CurveEditor::findPointNear (
     return best;
 }
 
+double CurveEditor::snapAmount (double amount) const
+{
+    constexpr float thresholdPixels = 7.0f;
+    const float y = amountToY (amount);
+
+    for (const double target : { 0.0, 1.0, 2.0 })
+        if (std::abs (amountToY (target) - y) <= thresholdPixels)
+            return target;
+
+    return amount;
+}
+
 void CurveEditor::addOrUpdatePoint (double freq, double amount)
 {
     auto& points = editablePoints();
@@ -785,9 +797,15 @@ void CurveEditor::mouseDown (const juce::MouseEvent& event)
     lastDragPosition = event.position;
 
     if (tool == Tool::Draw)
-        addOrUpdatePoint (xToFreq (event.position.x), yToAmount (event.position.y));
+    {
+        const double amount = yToAmount (event.position.y);
+        addOrUpdatePoint (xToFreq (event.position.x),
+                          event.mods.isAltDown() ? amount : snapAmount (amount));
+    }
     else
+    {
         eraseNear (event.position.x);
+    }
 
     applyEdits (true);
 }
@@ -817,10 +835,13 @@ void CurveEditor::mouseDrag (const juce::MouseEvent& event)
                                        ? points[index + 1].freqHz * 0.999
                                        : kMaxFreq - 0.5;
 
+            const double amount = juce::jlimit (0.0, kMaxAmount,
+                                                yToAmount (event.position.y));
+
             points[index].freqHz = juce::jlimit (minFreq, maxFreq,
                                                  xToFreq (event.position.x));
-            points[index].amount = juce::jlimit (0.0, kMaxAmount,
-                                                 yToAmount (event.position.y));
+            points[index].amount = event.mods.isAltDown() ? amount
+                                                          : snapAmount (amount);
             applyEdits();
         }
     }
@@ -859,7 +880,11 @@ void CurveEditor::mouseDoubleClick (const juce::MouseEvent& event)
         return;
 
     pushUndo();
-    addOrUpdatePoint (xToFreq (event.position.x), yToAmount (event.position.y));
+
+    const double amount = yToAmount (event.position.y);
+
+    addOrUpdatePoint (xToFreq (event.position.x),
+                      event.mods.isAltDown() ? amount : snapAmount (amount));
     applyEdits (true);
 }
 

@@ -85,6 +85,7 @@ private:
     std::unique_ptr<juce::ComboBoxParameterAttachment> qualityAttachment;
     double qualitySampleRate = 0.0;
 
+    juce::Label routingCaption;
     juce::TextButton routingLR { "LR" };
     juce::TextButton routingMS { "MS" };
     std::unique_ptr<juce::ParameterAttachment> routingAttachment;

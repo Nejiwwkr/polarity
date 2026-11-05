@@ -9,6 +9,10 @@
   buttons to M/ST/S and the route switches with a short fade-out/fade-in while
   the FIR history is re-primed. M/S mode makes uses such as mono bass or
   centre removal possible.
+- NODE edits snap to 0 / 1 / 2 within 7 px (hold Alt to disable), so an exact
+  NULL is easy to hit; the point grab radius grows from 8 px to 14 px.
+- The footer ROUTE group now has the same height as QUALITY/EDGE, and the
+  A/B → L/ST/R → tools gaps are equal.
 
 ### Changed
 

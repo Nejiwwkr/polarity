@@ -29,6 +29,8 @@ __pycache__/
 # also some screen shots
 /Demo/
 
+/Docs/Memorandum.md
+
 # OS
 Thumbs.db
 .DS_Store

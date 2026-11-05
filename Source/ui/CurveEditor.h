@@ -83,7 +83,10 @@ private:
     void strokeTo (juce::Point<float> position);
     int findPointNear (const std::vector<polarity::dsp::CurvePoint>& points,
                        juce::Point<float> position,
-                       float radius = 8.0f) const;
+                       float radius = 14.0f) const;
+
+    /** Pulls an amount onto 0, 1 or 2 when the cursor is within a few pixels. */
+    double snapAmount (double amount) const;
 
     std::vector<polarity::dsp::CurvePoint>& editablePoints();
     const std::vector<polarity::dsp::CurvePoint>& displayedPoints() const;

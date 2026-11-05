@@ -408,6 +408,12 @@ PolarityAudioProcessorEditor::PolarityAudioProcessorEditor (PolarityAudioProcess
         qualityAttachment = std::make_unique<juce::ComboBoxParameterAttachment> (
             *parameter, qualityBox);
 
+    routingCaption.setText ("ROUTE", juce::dontSendNotification);
+    routingCaption.setFont (juce::Font (juce::FontOptions (polarity::type::control)));
+    routingCaption.setJustificationType (juce::Justification::centredLeft);
+    routingCaption.setColour (juce::Label::textColourId, polarity::theme::secondary);
+    addAndMakeVisible (routingCaption);
+
     for (auto* button : { &routingLR, &routingMS })
     {
         styleButton (*button);
@@ -452,10 +458,12 @@ PolarityAudioProcessorEditor::PolarityAudioProcessorEditor (PolarityAudioProcess
     layerLeft.setTooltip ("Edit the left channel only");
     layerStereo.setTooltip ("Edit both channels together");
     layerRight.setTooltip ("Edit the right channel only");
+    routingCaption.setTooltip ("Processing routing: L/R or mid/side");
     routingLR.setTooltip ("Process the curves on left/right channels");
     routingMS.setTooltip ("Process the curves on mid/side signals");
     toolDraw.setTooltip ("Draw the inverted-amount curve");
-    toolNode.setTooltip ("Drag points; double-click to add, right-click to delete");
+    toolNode.setTooltip ("Drag points; double-click to add, right-click to delete. "
+                         "Snaps to 0 / 1 / 2; hold Alt for free placement");
     toolErase.setTooltip ("Erase the curve back to 0");
     undoButton.setTooltip ("Undo curve edit");
     redoButton.setTooltip ("Redo curve edit");
@@ -633,7 +641,7 @@ void PolarityAudioProcessorEditor::paint (juce::Graphics& g)
     g.fillRoundedRectangle (groupBounds ({ &toolDraw, &toolNode, &toolErase }), 6.0f);
     g.fillRoundedRectangle (groupBounds ({ &spectrumButton, &polarityButton }), 6.0f);
     g.fillRoundedRectangle (groupBounds ({ &normButton, &deltaButton }), 6.0f);
-    g.fillRoundedRectangle (groupBounds ({ &routingLR, &routingMS }), 6.0f);
+    g.fillRoundedRectangle (groupBounds ({ &routingCaption, &routingLR, &routingMS }), 6.0f);
     g.fillRoundedRectangle (groupBounds ({ &qualityCaption, &qualityBox,
                                            &edgeCaption, &edgeBox }), 6.0f);
 }
@@ -698,7 +706,7 @@ void PolarityAudioProcessorEditor::resized()
     slotAButton.setBounds (takeLeft (40));
     row.removeFromLeft (2);
     slotBButton.setBounds (takeLeft (40));
-    row.removeFromLeft (14);
+    row.removeFromLeft (20);
 
     layerLeft.setBounds (takeLeft (40));
     row.removeFromLeft (2);
@@ -706,7 +714,7 @@ void PolarityAudioProcessorEditor::resized()
     row.removeFromLeft (2);
     layerRight.setBounds (takeLeft (40));
 
-    row.removeFromLeft (26);
+    row.removeFromLeft (20);
 
     toolDraw.setBounds (takeLeft (60));
     row.removeFromLeft (2);
@@ -764,6 +772,7 @@ void PolarityAudioProcessorEditor::resized()
     footerRight.removeFromRight (12);
     routingMS.setBounds (footerRight.removeFromRight (36).reduced (0, 1));
     routingLR.setBounds (footerRight.removeFromRight (36).reduced (0, 1));
+    routingCaption.setBounds (footerRight.removeFromRight (44));
 
     auto footerLeft = footerControls;
     footerLeft.removeFromLeft (28);
