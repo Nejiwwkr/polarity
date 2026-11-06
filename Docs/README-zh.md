@@ -40,7 +40,7 @@ Y_c(f) = (1 − A_c(f)) · X_c(f)        A_c(f) ∈ [0, 2]
 - [x] 离线测试：DSP 自检 + Processor 集成测试 + A/B/预设/计量/分析/质量档/宿主参数 + 编辑器 smoke 全部 PASS
 - [x] CPU 优化：分区 FFT 卷积、频谱/波形分析限到约 30Hz 且仅在编辑器打开时运行
 - [x] M4：44.1/48/96/192kHz 与 32/512/2048 块大小矩阵、单声道总线测试、
-      状态 schema v2（quality 索引迁移）、pluginval 脚本、1.0.0 打包与用户级安装
+      状态 schema v2（quality 索引迁移）、pluginval 脚本、1.1.0 打包、Inno Setup 安装器与 GitHub Actions CI
 
 当前插件默认曲线是**平直（A=0，透明）**。用 DRAW 在画布上画出反相量；ST 层会同时写入 L 和 R。
 
@@ -61,7 +61,7 @@ cmake --build Build --config Release --target Polarity_VST3 Polarity_Standalone 
 
 VST3 元数据把插件声明为 **Fx + EQ** 子分类（`VST3_CATEGORIES Fx EQ`，对应 `moduleinfo.json` 的 `Sub Categories: ["Fx","EQ"]`）。FL 重新扫描插件后会读取它；如果 FL 的浏览器仍按自己的 plugin database 归类，可以在 FL 里手动移动。
 
-## 发布 1.0.0
+## 发布 1.1.0
 
 > 当前版本为 **1.1.0**（2026-11-05 发布），包含分区 FFT 卷积、1024 档、M/S 路由与手感/UI 修正；变更见 [CHANGELOG.md](../CHANGELOG.md)。
 
@@ -76,18 +76,24 @@ VST3 元数据把插件声明为 **Fx + EQ** 子分类（`VST3_CATEGORIES Fx EQ`
 | 4096 | 46.4 ms | 42.7 ms | 21.3 ms | 10.7 ms |
 | 8192 | 92.9 ms | 85.3 ms | 42.7 ms | 21.3 ms |
 
-打包（生成 `dist\Polarity-1.0.0-win64\` 与 zip、打印 SHA256）：
+打包（生成 `dist\Polarity-<version>-win64\`、zip、Inno Setup 安装器，并打印 SHA256）：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File Tools\package_release.ps1
 ```
 
-安装（默认用户级 `%APPDATA%\VST3`，无需管理员；`-System` 才装到公共 VST3 目录）：
+- 安装器需要 Inno Setup 6（`winget install --id JRSoftware.InnoSetup -e`）；找不到时脚本会提示并跳过，也可用 `-SkipInstaller`。
+- 安装器默认 per-user：VST3 → `%APPDATA%\VST3`，Standalone → `%LOCALAPPDATA%\Programs\Polarity`，免管理员；向导里可选 “Install for all users”，则 VST3 → `C:\Program Files\Common Files\VST3`。卸载不删除 `%APPDATA%\Polarity\Presets`。
+- 安装器未签名，SmartScreen 会提示未知发布者。
+
+便携 zip 仍可用 PowerShell 脚本安装（默认用户级，`-System` 装公共目录）：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File Tools\install_vst3.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File Tools\install_vst3.ps1 -System
 ```
+
+GitHub Actions（`.github/workflows/build.yml`）在每次 push / PR 上构建、跑测试与 pluginval（`-SkipGuiTests`）、打包 zip + 安装器；推送 `v*` tag 时校验版本并创建附带两个资产的 **draft** Release，确认后手动发布。
 
 pluginval 1.0.4（脚本会自动查找/下载 `pluginval.exe`；无桌面环境用 `-SkipGuiTests`）：
 

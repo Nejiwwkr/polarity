@@ -1,5 +1,7 @@
 # Polarity
 
+[![Build](https://github.com/Nejiwwkr/polarity/actions/workflows/build.yml/badge.svg)](https://github.com/Nejiwwkr/polarity/actions/workflows/build.yml)
+
 **Draw the frequencies you want to remove — or flip upside down.**
 
 Polarity is a VST3 / standalone effect for Windows that turns polarity inversion into a drawable EQ curve. Instead of boosting or cutting gain, every point on the curve sets how much **inverted signal** is mixed into that frequency band:
@@ -31,19 +33,33 @@ Draw separate curves for the left and right channels, or link them together with
 
 The latest release is **v1.1.0**.
 
-1. Download `Polarity-<version>-win64.zip` from the [Releases page](https://github.com/Nejiwwkr/polarity/releases).
-2. Extract it anywhere.
-3. In PowerShell, from the extracted folder:
+### Installer (recommended)
+
+1. Download `Polarity-<version>-win64-setup.exe` from the [Releases page](https://github.com/Nejiwwkr/polarity/releases).
+2. Run it. The default install is per-user and does not require administrator rights; choose **Install for all users** in the wizard if your host only scans the shared VST3 folder.
+3. Rescan plugins in your DAW. In FL Studio: **Options → Manage plugins → Find installed plugins**.
+
+Install locations:
+
+| | Per-user (default) | All users |
+|---|---|---|
+| VST3 | `%APPDATA%\VST3\Polarity.vst3` | `C:\Program Files\Common Files\VST3\Polarity.vst3` |
+| Standalone | `%LOCALAPPDATA%\Programs\Polarity` | `C:\Program Files\Polarity` |
+
+The installer is not code-signed, so Windows SmartScreen may show an unknown-publisher warning. Do not keep both a per-user and an all-users copy installed.
+
+### Portable zip
+
+1. Download `Polarity-<version>-win64.zip` and extract it anywhere.
+2. In PowerShell, from the extracted folder:
 
    ```powershell
    powershell -ExecutionPolicy Bypass -File .\install_vst3.ps1
    ```
 
-   This installs to the user-level `%APPDATA%\VST3` folder and does not require administrator rights. Use `-System` to install into `C:\Program Files\Common Files\VST3` instead.
+   This installs to `%APPDATA%\VST3`; use `-System` for `C:\Program Files\Common Files\VST3`.
 
-4. Rescan plugins in your DAW. In FL Studio: **Options → Manage plugins → Find installed plugins**.
-
-You can also copy `VST3\Polarity.vst3` into `%APPDATA%\VST3` manually. Do not keep both a user-level and a system-wide copy installed.
+3. Rescan plugins in your DAW.
 
 ## Quick start
 
@@ -91,7 +107,7 @@ The engine uses zero-additional-latency partitioned FFT convolution, so the repo
 
 ## Build from source
 
-Requirements: CMake 3.22+, Visual Studio 2022 with the C++ workload, and the vendored JUCE 8.0.15 in `ThirdParty/JUCE-8.0.15/JUCE`.
+Requirements: CMake 3.22+, Visual Studio 2022 with the C++ workload, and JUCE 8.0.15 in `ThirdParty/JUCE-8.0.15/JUCE` (vendored locally or cloned at tag `8.0.15`). Optional: Inno Setup 6 to build the Windows installer.
 
 ```bash
 cmake -S . -B Build -G "Visual Studio 17 2022" -A x64
@@ -104,11 +120,13 @@ Run the test suite:
 .\Build\PolarityTests_artefacts\Release\PolarityTests.exe
 ```
 
-Package a release zip:
+Package a release zip and, when Inno Setup 6 is installed, the Windows installer:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File Tools\package_release.ps1
 ```
+
+The outputs are written to `dist/`: `Polarity-<version>-win64.zip` and `Polarity-<version>-win64-setup.exe`. Use `-SkipInstaller` when Inno Setup is unavailable.
 
 Run pluginval (downloads v1.0.4 on first use):
 
@@ -123,7 +141,8 @@ powershell -ExecutionPolicy Bypass -File Tools\run_pluginval.ps1
 - Null depth at 1 kHz: about −125 dB (44.1 kHz), −111 dB (48 kHz), −100 dB (96 kHz), −108 dB (192 kHz) on the test curve.
 - M/S routing is verified for identity against L/R (identical curves), mono-bass cancellation, click-free switching, and mono operation.
 - pluginval 1.0.4, strictness 10, GUI tests enabled: **SUCCESS**.
-- State schema v1 with migration from 0.1.0 projects and presets.
+- State schema v2 with migration from older projects and presets.
+- GitHub Actions builds, runs the tests and pluginval, and packages the zip + installer on every push; tags produce a draft release.
 
 ## Known limitations
 
@@ -131,7 +150,7 @@ powershell -ExecutionPolicy Bypass -File Tools\run_pluginval.ps1
 - Switching **LR / MS** produces a short (~60 ms) level dip while the engine re-primes its history. Routing is a structural setting and is not host-automatable.
 - Free-drawn curves and display settings are not host-automatable, so they do not appear in the host automation list or hint panel.
 - Curve editing uses the plugin's own undo/redo, not the host undo history.
-- Windows x64 only; the build is unsigned and has no installer.
+- Windows x64 only. The plug-in and installer are unsigned, so SmartScreen may warn.
 
 ## Documentation
 

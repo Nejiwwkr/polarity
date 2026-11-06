@@ -1,7 +1,9 @@
 param(
     [string]$Configuration = 'Release',
     [switch]$SkipBuild,
-    [switch]$NoZip
+    [switch]$NoZip,
+    [switch]$SkipInstaller,
+    [string]$InnoSetupPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -82,4 +84,60 @@ if (-not $NoZip) {
     Write-Host "Zip:    $zip"
     Write-Host "Size:   $([math]::Round((Get-Item -LiteralPath $zip).Length / 1MB, 2)) MB"
     Write-Host "SHA256: $($hash.Hash)"
+}
+
+if (-not $SkipInstaller) {
+    $iscc = $InnoSetupPath
+
+    if ([string]::IsNullOrWhiteSpace($iscc)) {
+        $candidates = @()
+
+        if (${env:ProgramFiles(x86)}) {
+            $candidates += Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+        }
+
+        if ($env:ProgramFiles) {
+            $candidates += Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe'
+        }
+
+        if ($env:LOCALAPPDATA) {
+            $candidates += Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6\ISCC.exe'
+        }
+
+        foreach ($candidate in $candidates) {
+            if (Test-Path -LiteralPath $candidate) {
+                $iscc = $candidate
+                break
+            }
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($iscc)) {
+        Write-Host ''
+        Write-Host 'Inno Setup 6 not found; skipping installer.'
+        Write-Host 'Install it with: winget install --id JRSoftware.InnoSetup -e'
+        Write-Host 'or pass -InnoSetupPath <path to ISCC.exe>; use -SkipInstaller to silence this.'
+    }
+    else {
+        $iss = Join-Path $PSScriptRoot 'polarity.iss'
+
+        & $iscc "/DMyAppVersion=$version" "/DStageDir=$stage" "/O$distRoot" $iss
+
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Inno Setup failed'
+        }
+
+        $setup = Join-Path $distRoot "Polarity-$version-win64-setup.exe"
+
+        if (Test-Path -LiteralPath $setup) {
+            $setupHash = Get-FileHash -LiteralPath $setup -Algorithm SHA256
+
+            Write-Host "Setup:  $setup"
+            Write-Host "Size:   $([math]::Round((Get-Item -LiteralPath $setup).Length / 1MB, 2)) MB"
+            Write-Host "SHA256: $($setupHash.Hash)"
+        }
+        else {
+            throw "Installer was not produced: $setup"
+        }
+    }
 }

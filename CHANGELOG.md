@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Windows installer (Inno Setup): per-user by default, optional all-users
+  install, VST3 plus optional standalone, Start Menu shortcut and uninstaller.
+  Presets in `%APPDATA%\Polarity\Presets` are left in place.
+- GitHub Actions CI: fetches JUCE 8.0.15, builds, runs the test suite and
+  pluginval, packages the zip and installer, uploads artifacts, and creates a
+  draft release when a `v*` tag is pushed.
+
 ## [1.1.0] - 2026-11-05
 
 ### Added
